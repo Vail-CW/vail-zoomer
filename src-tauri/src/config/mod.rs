@@ -60,6 +60,10 @@ pub struct Settings {
     pub midi_device: Option<String>,
     pub input_device: Option<String>,
     pub output_device: Option<String>,
+
+    // Linux-specific: whether virtual audio setup has been completed
+    #[serde(default)]
+    pub linux_audio_setup_completed: bool,
 }
 
 impl Default for Settings {
@@ -80,6 +84,7 @@ impl Default for Settings {
             midi_device: None,
             input_device: None,
             output_device: None,
+            linux_audio_setup_completed: false,
         }
     }
 }

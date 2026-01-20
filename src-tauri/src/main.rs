@@ -5,6 +5,7 @@ mod audio;
 mod cw;
 mod input;
 mod config;
+mod linux_audio_setup;
 
 use std::sync::Arc;
 use std::thread;
@@ -303,6 +304,30 @@ fn start_midi_event_loop(
     });
 }
 
+// Linux Virtual Audio Setup Commands
+
+#[tauri::command]
+fn check_linux_virtual_audio() -> Result<linux_audio_setup::VirtualAudioStatus, String> {
+    linux_audio_setup::check_virtual_audio_device()
+}
+
+#[tauri::command]
+fn setup_linux_virtual_audio() -> Result<linux_audio_setup::SetupResult, String> {
+    linux_audio_setup::setup_virtual_audio_device()
+}
+
+#[tauri::command]
+fn mark_linux_audio_setup_complete(state: tauri::State<AppState>) -> Result<(), String> {
+    let mut settings = state.settings.lock();
+    settings.linux_audio_setup_completed = true;
+    settings.save()
+}
+
+#[tauri::command]
+fn is_linux_audio_setup_completed(state: tauri::State<AppState>) -> bool {
+    state.settings.lock().linux_audio_setup_completed
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -349,6 +374,10 @@ fn main() {
             stop_audio,
             key_down,
             key_up,
+            check_linux_virtual_audio,
+            setup_linux_virtual_audio,
+            mark_linux_audio_setup_complete,
+            is_linux_audio_setup_completed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

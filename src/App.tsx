@@ -26,6 +26,18 @@ interface Settings {
   midi_device: string | null;
   input_device: string | null;
   output_device: string | null;
+  linux_audio_setup_completed: boolean;
+}
+
+// Linux virtual audio setup types
+interface VirtualAudioStatus {
+  exists: boolean;
+  audio_system: "PipeWire" | "PulseAudio" | "Unknown";
+}
+
+interface SetupResult {
+  success: boolean;
+  message: string;
 }
 
 const KEYER_TYPES = [
@@ -818,6 +830,118 @@ function HelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }
   );
 }
 
+// Linux Virtual Audio Setup Banner Component
+function LinuxAudioSetupBanner({
+  status,
+  onSetup,
+  onDismiss,
+  isSettingUp,
+  result,
+}: {
+  status: VirtualAudioStatus;
+  onSetup: () => void;
+  onDismiss: () => void;
+  isSettingUp: boolean;
+  result: SetupResult | null;
+}) {
+  if (result?.success) {
+    return (
+      <div className="p-3 bg-green-900/50 border border-green-700 rounded-lg mb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="text-green-300">{result.message}</span>
+          </div>
+          <button
+            onClick={onDismiss}
+            className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (result && !result.success) {
+    return (
+      <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg mb-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              <span className="text-red-300">Setup failed</span>
+            </div>
+            <p className="text-sm text-gray-400 mt-1">{result.message}</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onSetup}
+              className="px-3 py-1 text-sm bg-amber-600 hover:bg-amber-500 rounded"
+            >
+              Retry
+            </button>
+            <button
+              onClick={onDismiss}
+              className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 bg-blue-900/50 border border-blue-700 rounded-lg mb-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-blue-300">Virtual audio device not found</span>
+          </div>
+          <p className="text-sm text-gray-400 mt-1">
+            Vail Zoomer needs a virtual audio device to send audio to Zoom.
+            Detected: <span className="text-amber-400">{status.audio_system}</span>
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onDismiss}
+            className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded"
+          >
+            Later
+          </button>
+          <button
+            onClick={onSetup}
+            disabled={isSettingUp}
+            className="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-500 disabled:bg-gray-600 rounded flex items-center gap-2"
+          >
+            {isSettingUp ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Setting up...
+              </>
+            ) : (
+              "Setup Virtual Audio"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [cwText, setCwText] = useState("");
   const [estimatedWpm, setEstimatedWpm] = useState(0);
@@ -838,6 +962,12 @@ function App() {
   const [micLevel, setMicLevel] = useState(0);
   const [outputLevel, setOutputLevel] = useState(0);
 
+  // Linux virtual audio setup state
+  const [showLinuxAudioBanner, setShowLinuxAudioBanner] = useState(false);
+  const [linuxAudioStatus, setLinuxAudioStatus] = useState<VirtualAudioStatus | null>(null);
+  const [linuxSetupInProgress, setLinuxSetupInProgress] = useState(false);
+  const [linuxSetupResult, setLinuxSetupResult] = useState<SetupResult | null>(null);
+
   // Settings state
   const [settings, setSettings] = useState<Settings>({
     keyer_type: "Straight",
@@ -855,6 +985,7 @@ function App() {
     midi_device: null,
     input_device: null,
     output_device: null,
+    linux_audio_setup_completed: false,
   });
 
   // OS-specific device name helpers
@@ -928,6 +1059,20 @@ function App() {
         setAudioStarted(true);
       } catch (err) {
         console.error("Failed to start audio:", err);
+      }
+
+      // Check for Linux virtual audio device (Linux only)
+      const os = await platform();
+      if (os === "linux" && !savedSettings.linux_audio_setup_completed) {
+        try {
+          const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
+          setLinuxAudioStatus(status);
+          if (!status.exists) {
+            setShowLinuxAudioBanner(true);
+          }
+        } catch (err) {
+          console.error("Failed to check Linux virtual audio:", err);
+        }
       }
     };
 
@@ -1024,6 +1169,38 @@ function App() {
     }, isDit ? 100 : 300);
   };
 
+  // Linux virtual audio setup handlers
+  const handleLinuxAudioSetup = async () => {
+    setLinuxSetupInProgress(true);
+    setLinuxSetupResult(null);
+
+    try {
+      const result = await invoke<SetupResult>("setup_linux_virtual_audio");
+      setLinuxSetupResult(result);
+
+      if (result.success) {
+        // Mark setup as completed so we don't prompt again
+        await invoke("mark_linux_audio_setup_complete");
+
+        // Refresh audio device list
+        const outputDeviceList = await invoke<DeviceInfo[]>("list_audio_devices");
+        setOutputDevices(outputDeviceList);
+      }
+    } catch (err) {
+      setLinuxSetupResult({
+        success: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setLinuxSetupInProgress(false);
+    }
+  };
+
+  const handleLinuxAudioDismiss = () => {
+    setShowLinuxAudioBanner(false);
+    setLinuxSetupResult(null);
+  };
+
   // Level meter component
   const LevelMeter = ({ level, label }: { level: number; label: string }) => (
     <div>
@@ -1059,6 +1236,17 @@ function App() {
           Help
         </button>
       </header>
+
+      {/* Linux Virtual Audio Setup Banner */}
+      {currentOS === "linux" && showLinuxAudioBanner && linuxAudioStatus && (
+        <LinuxAudioSetupBanner
+          status={linuxAudioStatus}
+          onSetup={handleLinuxAudioSetup}
+          onDismiss={handleLinuxAudioDismiss}
+          isSettingUp={linuxSetupInProgress}
+          result={linuxSetupResult}
+        />
+      )}
 
       <main className="space-y-3">
         {/* Status Bar */}
