@@ -40,28 +40,29 @@ A virtual audio device creates a "loopback" that lets Vail Zoomer send mixed aud
 
 ## Virtual Audio Device Setup
 
-### Windows: VB-Cable
+### Windows: VB-Cable (Included with Installer)
 
-**VB-Cable** is a free virtual audio driver for Windows.
+**VB-Cable** is a free virtual audio driver for Windows, bundled with the Vail Zoomer installer.
 
-#### Step 1: Download VB-Cable
-1. Go to [vb-audio.com/Cable](https://vb-audio.com/Cable/)
-2. Click the big **"Download"** button
-3. Save the ZIP file to your Downloads folder
+#### During Installation
+The Vail Zoomer installer will prompt you to install VB-Cable. When prompted:
+1. Click **"Yes"** to open the VB-Cable installer folder
+2. **Right-click** on `VBCABLE_Setup_x64.exe` and select **"Run as administrator"**
+3. Click **"Install Driver"** when the window appears
+4. Wait for the "Installation Complete" message, then click OK
 
-#### Step 2: Install the Driver
-1. Open your Downloads folder and find the ZIP file (named something like `VBCABLE_Driver_Pack...`)
-2. **Right-click** the ZIP file → select **"Extract All"** → click **"Extract"**
-3. Open the extracted folder
-4. **Right-click** on `VBCABLE_Setup_x64.exe` and select **"Run as administrator"**
-   - (Use `VBCABLE_Setup.exe` if you have 32-bit Windows)
-5. Click **"Install Driver"** when the window appears
-6. Wait for the "Installation Complete" message, then click OK
+#### Manual Installation (if needed)
+If you skipped VB-Cable during installation, you can install it later:
+1. Navigate to `C:\Program Files\Vail Zoomer\resources\VBCABLE\`
+2. **Right-click** on `VBCABLE_Setup_x64.exe` and select **"Run as administrator"**
+3. Click **"Install Driver"**
 
-#### Step 3: Restart Your Computer
+Or download directly from [vb-audio.com/Cable](https://vb-audio.com/Cable/)
+
+#### After Installation: Restart Your Computer
 ⚠️ **This is required!** The virtual audio device will NOT appear until you restart. Save your work and restart now.
 
-#### Step 4: Verify Installation
+#### Verify Installation
 After your computer restarts:
 1. Right-click the speaker icon in your taskbar (bottom right)
 2. Click **"Sound settings"**
@@ -437,5 +438,15 @@ Contributions are welcome! Please open an issue or pull request.
 
 - [Tauri](https://tauri.app/) - Cross-platform app framework
 - [CPAL](https://github.com/RustAudio/cpal) - Cross-platform audio library
-- [VB-Audio](https://vb-audio.com/) - VB-Cable for Windows
+- [VB-Audio](https://vb-audio.com/) - VB-Cable for Windows (donationware - consider supporting them!)
 - [BlackHole](https://existential.audio/blackhole/) - Virtual audio for macOS
+
+## Third-Party Software
+
+### VB-Cable (Windows)
+
+The Windows installer includes [VB-Cable](https://vb-audio.com/Cable/) by VB-Audio Software. VB-Cable is a donationware virtual audio driver that enables Vail Zoomer to route audio to video conferencing applications.
+
+- **Website**: [vb-audio.com/Cable](https://vb-audio.com/Cable/)
+- **License**: Donationware - free to use, donations welcome
+- **Support VB-Audio**: If you find VB-Cable useful, please consider [donating to VB-Audio](https://vb-audio.com/Cable/) to support their continued development.

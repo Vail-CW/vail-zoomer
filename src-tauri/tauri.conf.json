@@ -35,12 +35,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "resources/VBCABLE/**/*"
+    ],
     "category": "Utility",
     "shortDescription": "CW sidetone + microphone merger for video calls",
     "longDescription": "Vail Zoomer merges CW (Morse Code) sidetone with your microphone audio for video conferencing. Perfect for amateur radio operators who want to send Morse code during Zoom, Teams, Discord, or other video calls.",
     "windows": {
       "certificateThumbprint": null,
-      "timestampUrl": "http://timestamp.digicert.com"
+      "timestampUrl": "http://timestamp.digicert.com",
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
     },
     "macOS": {
       "minimumSystemVersion": "10.15",
