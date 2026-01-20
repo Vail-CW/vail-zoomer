@@ -1062,11 +1062,16 @@ function App() {
       }
 
       // Check for Linux virtual audio device (Linux only)
-      if (detectedOS === "linux" && !savedSettings.linux_audio_setup_completed) {
+      // Always check status on Linux so settings panel can show current state
+      console.log("[init] Detected OS:", detectedOS);
+      if (detectedOS === "linux") {
         try {
+          console.log("[init] Checking Linux virtual audio...");
           const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
+          console.log("[init] Linux audio status:", status);
           setLinuxAudioStatus(status);
-          if (!status.exists) {
+          // Only show banner if device doesn't exist AND setup hasn't been completed/dismissed
+          if (!status.exists && !savedSettings.linux_audio_setup_completed) {
             setShowLinuxAudioBanner(true);
           }
         } catch (err) {
@@ -1281,21 +1286,22 @@ function App() {
           </div>
         </div>
 
-        {/* MIDI Device Selection */}
-        {!midiConnected && midiDevices.length > 0 && (
-          <div className="p-4 bg-gray-800 rounded-lg">
-            <h2 className="text-lg font-semibold mb-2">Select MIDI Device</h2>
-            <div className="flex flex-wrap gap-2">
+        {/* MIDI Device Selection - Always show if devices available */}
+        {midiDevices.length > 0 && (
+          <div className="p-3 bg-gray-800 rounded-lg">
+            <h2 className="text-md font-semibold mb-2">MIDI Device</h2>
+            <select
+              value={selectedMidiDevice || ""}
+              onChange={(e) => e.target.value && connectMidi(e.target.value)}
+              className="w-full bg-gray-700 text-white px-3 py-2 rounded text-sm"
+            >
+              <option value="">Select a MIDI device...</option>
               {midiDevices.map((device) => (
-                <button
-                  key={device}
-                  onClick={() => connectMidi(device)}
-                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
-                >
+                <option key={device} value={device}>
                   {device}
-                </button>
+                </option>
               ))}
-            </div>
+            </select>
           </div>
         )}
 
@@ -1520,6 +1526,49 @@ function App() {
           <p className="text-xs text-gray-500 mt-2 text-right">
             Select "{virtualDeviceNames.output}" as output here, then "{virtualDeviceNames.input}" as microphone in Zoom.
           </p>
+
+          {/* Linux Virtual Audio Setup - Always available on Linux */}
+          {currentOS === "linux" && (
+            <div className="mt-3 pt-3 border-t border-gray-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-gray-300">Linux Virtual Audio Setup</h3>
+                  <p className="text-xs text-gray-500">
+                    {linuxAudioStatus?.exists
+                      ? "Virtual audio device found"
+                      : "Create a virtual audio device for Zoom"}
+                    {linuxAudioStatus?.audio_system && linuxAudioStatus.audio_system !== "Unknown" && (
+                      <span className="ml-1">({linuxAudioStatus.audio_system})</span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={handleLinuxAudioSetup}
+                  disabled={linuxSetupInProgress}
+                  className="px-3 py-1.5 text-sm bg-amber-600 hover:bg-amber-500 disabled:bg-gray-600 rounded flex items-center gap-2"
+                >
+                  {linuxSetupInProgress ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Setting up...
+                    </>
+                  ) : linuxAudioStatus?.exists ? (
+                    "Reinstall"
+                  ) : (
+                    "Setup Now"
+                  )}
+                </button>
+              </div>
+              {linuxSetupResult && (
+                <div className={`mt-2 p-2 rounded text-sm ${linuxSetupResult.success ? "bg-green-900/30 text-green-300" : "bg-red-900/30 text-red-300"}`}>
+                  {linuxSetupResult.message}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
     </div>
