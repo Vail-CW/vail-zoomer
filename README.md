@@ -133,11 +133,37 @@ By default, if you send to BlackHole, you won't hear the sidetone locally. To he
 
 ---
 
-### Linux: PulseAudio/PipeWire Virtual Sink
+### Linux: Automatic Virtual Audio Setup
 
-Linux uses software-based virtual audio devices through PulseAudio or PipeWire.
+Linux uses software-based virtual audio devices through PulseAudio or PipeWire. **Vail Zoomer can set this up automatically for you.**
 
-#### Step 1: Check Which Audio System You Have
+#### Automatic Setup (Recommended)
+
+1. **Launch Vail Zoomer**
+2. If no virtual audio device is detected, you'll see a blue banner at the top: "Virtual audio device not found"
+3. Click **"Setup Virtual Audio"**
+4. If prompted, enter your admin password (this is only needed if `pactl` isn't installed)
+5. The app will automatically detect your audio system (PipeWire or PulseAudio) and create the virtual device
+6. Once complete, "Vail Zoomer" will appear in your output device list
+
+You can also trigger this setup anytime from the **Audio Routing** section at the bottom (look for "Linux Virtual Audio Setup").
+
+#### What Gets Created
+
+The automatic setup creates:
+- **VailZoomer** - The output device you'll select in Vail Zoomer
+- **VailZoomerMic** - The microphone input that Zoom will see
+
+The devices persist across reboots.
+
+---
+
+#### Manual Setup (Alternative)
+
+If the automatic setup doesn't work, you can set up the virtual device manually.
+
+**Step 1: Check which audio system you have**
+
 Open a terminal (press Ctrl+Alt+T) and run:
 ```bash
 pactl info | grep "Server Name"
@@ -146,21 +172,13 @@ pactl info | grep "Server Name"
 - If it says **"PipeWire"** → follow PipeWire instructions below
 - If it says **"PulseAudio"** → follow PulseAudio instructions below
 
----
-
-#### For PipeWire (Ubuntu 22.04+, Fedora 34+, most modern distros)
-
-**Step 2a: Create the config folder**
+**For PipeWire (Ubuntu 22.04+, Fedora 34+, most modern distros):**
 ```bash
 mkdir -p ~/.config/pipewire/pipewire.conf.d
-```
-
-**Step 3a: Create the virtual device config file**
-```bash
 nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf
 ```
 
-This opens a text editor. Paste this entire block:
+Paste this block, then save (Ctrl+O, Enter, Ctrl+X):
 ```
 context.modules = [
   { name = libpipewire-module-loopback
@@ -181,57 +199,29 @@ context.modules = [
 ]
 ```
 
-This creates two devices:
-- **VailZoomer** - The output device you'll select in Vail Zoomer
-- **VailZoomerMic** - The microphone input that Zoom will see
-
-Press **Ctrl+O** then **Enter** to save, then **Ctrl+X** to exit.
-
-**Step 4a: Restart PipeWire to apply changes**
+Restart PipeWire:
 ```bash
 systemctl --user restart pipewire pipewire-pulse
 ```
 
----
-
-#### For PulseAudio (older systems)
-
-**Step 2b: Create the config folder**
+**For PulseAudio (older systems):**
 ```bash
 mkdir -p ~/.config/pulse
-```
-
-**Step 3b: Add the virtual devices to your config**
-```bash
-# Create null sink for Vail Zoomer output
 echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' >> ~/.config/pulse/default.pa
-
-# Create virtual microphone from the sink's monitor (this is what Zoom sees)
 echo 'load-module module-remap-source master=VailZoomer.monitor source_name=VailZoomerMic source_properties=device.description="Vail_Zoomer_Microphone"' >> ~/.config/pulse/default.pa
-```
-
-**Step 4b: Restart PulseAudio**
-```bash
 pulseaudio -k && pulseaudio --start
 ```
 
----
-
-#### Step 5: Verify Installation
-Run these commands to verify both devices were created:
+**Verify Installation:**
 ```bash
-# Check for the output device (sink)
-pactl list sinks short | grep -i vail
-
-# Check for the microphone input (source) - this is what Zoom uses
 pactl list sources short | grep -i vail
 ```
 
-If you see "VailZoomer" in the sinks and "VailZoomerMic" in the sources, you're all set! The devices will persist across reboots.
+If you see "VailZoomerMic", you're all set!
 
 #### Troubleshooting Linux:
-- **No virtual device**: Check if PulseAudio/PipeWire is running: `systemctl --user status pulseaudio` or `systemctl --user status pipewire`
-- **Permission errors**: Add your user to the `audio` group: `sudo usermod -a -G audio $USER` (then log out and back in)
+- **Automatic setup fails**: Try the manual setup instructions above
+- **No virtual device after setup**: Log out and back in, or restart your computer
 - **AppImage won't run**: Make it executable first: `chmod +x vail-zoomer*.AppImage`
 - **MIDI not detected**: Install ALSA MIDI support: `sudo apt install libasound2-plugins`
 - **Zoom doesn't show the virtual microphone**: Edit `~/.config/zoomus.conf` and set `system.audio.type=default` (instead of `alsa`), then restart Zoom

@@ -380,92 +380,80 @@ function HelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }
                 <div className="space-y-4">
                   <h4 className="font-semibold text-amber-400">Virtual Audio Device Setup for Linux</h4>
                   <p className="text-gray-300 text-sm">
-                    Linux uses software-based virtual audio. Follow the steps below carefully.
+                    Linux uses software-based virtual audio. <strong>Vail Zoomer can set this up automatically!</strong>
                   </p>
 
-                  {/* Step 1: Check audio system */}
-                  <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm font-medium text-white mb-2">Step 1: Check which audio system you have</p>
-                    <p className="text-xs text-gray-400 mb-2">
-                      Open a terminal (press <kbd className="bg-gray-700 px-1 rounded">Ctrl</kbd> + <kbd className="bg-gray-700 px-1 rounded">Alt</kbd> + <kbd className="bg-gray-700 px-1 rounded">T</kbd>) and run:
-                    </p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
-                      pactl info | grep "Server Name"
-                    </code>
-                    <p className="text-xs text-gray-400 mt-2">
-                      If it says <strong>"PipeWire"</strong> → follow PipeWire instructions below<br/>
-                      If it says <strong>"PulseAudio"</strong> → follow PulseAudio instructions below
+                  {/* Automatic Setup - Recommended */}
+                  <div className="bg-green-900/30 border border-green-700 rounded-lg p-3">
+                    <p className="text-sm font-medium text-green-400 mb-2">Automatic Setup (Recommended)</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-2">
+                      <li>Close this help window</li>
+                      <li>Look for a blue banner at the top saying <strong>"Virtual audio device not found"</strong></li>
+                      <li>Click <strong>"Setup Virtual Audio"</strong></li>
+                      <li>If prompted, enter your admin password (only needed once)</li>
+                      <li>Once complete, select <strong>"Vail Zoomer"</strong> as your output device below</li>
+                    </ol>
+                    <p className="text-xs text-gray-400 mt-3">
+                      You can also find this option in the <strong>Audio Routing</strong> section at the bottom of the main screen.
                     </p>
                   </div>
 
-                  {/* PipeWire Instructions */}
-                  <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3">
-                    <p className="text-sm font-medium text-blue-400 mb-2">For PipeWire (Ubuntu 22.04+, Fedora 34+, most modern distros)</p>
+                  {/* Manual Setup - Collapsible */}
+                  <details className="bg-gray-900 rounded-lg">
+                    <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg text-sm font-medium">
+                      Manual Setup (if automatic doesn't work)
+                    </summary>
+                    <div className="p-3 pt-0 space-y-3">
+                      <p className="text-xs text-gray-400">
+                        First, check your audio system by running: <code className="bg-black px-1 rounded">pactl info | grep "Server Name"</code>
+                      </p>
 
-                    <p className="text-xs text-gray-300 mb-2"><strong>Step 2a:</strong> Create the config folder (in terminal):</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-3">
-                      mkdir -p ~/.config/pipewire/pipewire.conf.d
-                    </code>
-
-                    <p className="text-xs text-gray-300 mb-2"><strong>Step 3a:</strong> Create the virtual device config file:</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-2">
-                      nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf
-                    </code>
-                    <p className="text-xs text-gray-400 mb-2">This opens a text editor. Paste this entire block:</p>
-                    <pre className="bg-black p-2 rounded text-green-400 text-xs overflow-x-auto">
-{`context.objects = [
-  { factory = adapter
+                      {/* PipeWire */}
+                      <div className="bg-blue-900/20 border border-blue-800 rounded p-2">
+                        <p className="text-xs font-medium text-blue-400 mb-2">For PipeWire:</p>
+                        <pre className="bg-black p-2 rounded text-green-400 text-xs overflow-x-auto">
+{`mkdir -p ~/.config/pipewire/pipewire.conf.d
+nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf`}
+                        </pre>
+                        <p className="text-xs text-gray-400 mt-1 mb-1">Paste this config:</p>
+                        <pre className="bg-black p-2 rounded text-green-400 text-xs overflow-x-auto">
+{`context.modules = [
+  { name = libpipewire-module-loopback
     args = {
-      factory.name = support.null-audio-sink
-      node.name = "VailZoomer"
-      node.description = "Vail Zoomer Output"
-      media.class = Audio/Sink
-      audio.position = [ FL FR ]
+      node.description = "Vail Zoomer"
+      capture.props = {
+        node.name = "VailZoomer"
+        media.class = "Audio/Sink"
+        audio.position = [ FL FR ]
+      }
+      playback.props = {
+        node.name = "VailZoomerMic"
+        media.class = "Audio/Source"
+        audio.position = [ FL FR ]
+      }
     }
   }
 ]`}
-                    </pre>
-                    <p className="text-xs text-gray-400 mt-2">
-                      Press <kbd className="bg-gray-700 px-1 rounded">Ctrl</kbd>+<kbd className="bg-gray-700 px-1 rounded">O</kbd> then <kbd className="bg-gray-700 px-1 rounded">Enter</kbd> to save, then <kbd className="bg-gray-700 px-1 rounded">Ctrl</kbd>+<kbd className="bg-gray-700 px-1 rounded">X</kbd> to exit.
-                    </p>
+                        </pre>
+                        <p className="text-xs text-gray-400 mt-1">Then restart: <code className="bg-black px-1 rounded">systemctl --user restart pipewire pipewire-pulse</code></p>
+                      </div>
 
-                    <p className="text-xs text-gray-300 mt-3 mb-2"><strong>Step 4a:</strong> Restart PipeWire to apply changes:</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
-                      systemctl --user restart pipewire pipewire-pulse
-                    </code>
-                  </div>
+                      {/* PulseAudio */}
+                      <div className="bg-purple-900/20 border border-purple-800 rounded p-2">
+                        <p className="text-xs font-medium text-purple-400 mb-2">For PulseAudio:</p>
+                        <pre className="bg-black p-2 rounded text-green-400 text-xs overflow-x-auto">
+{`mkdir -p ~/.config/pulse
+echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' >> ~/.config/pulse/default.pa
+echo 'load-module module-remap-source master=VailZoomer.monitor source_name=VailZoomerMic source_properties=device.description="Vail_Zoomer_Microphone"' >> ~/.config/pulse/default.pa
+pulseaudio -k && pulseaudio --start`}
+                        </pre>
+                      </div>
 
-                  {/* PulseAudio Instructions */}
-                  <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-3">
-                    <p className="text-sm font-medium text-purple-400 mb-2">For PulseAudio (older systems)</p>
-
-                    <p className="text-xs text-gray-300 mb-2"><strong>Step 2b:</strong> Create the config folder (in terminal):</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-3">
-                      mkdir -p ~/.config/pulse
-                    </code>
-
-                    <p className="text-xs text-gray-300 mb-2"><strong>Step 3b:</strong> Add the virtual device to your config:</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-2">
-                      echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' &gt;&gt; ~/.config/pulse/default.pa
-                    </code>
-
-                    <p className="text-xs text-gray-300 mt-3 mb-2"><strong>Step 4b:</strong> Restart PulseAudio:</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
-                      pulseaudio -k && pulseaudio --start
-                    </code>
-                  </div>
-
-                  {/* Verification */}
-                  <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm font-medium text-white mb-2">Step 5: Verify it worked</p>
-                    <p className="text-xs text-gray-400 mb-2">Run this command - you should see "VailZoomer" in the output:</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
-                      pactl list sinks short | grep -i vail
-                    </code>
-                    <p className="text-xs text-gray-400 mt-2">
-                      If you see a line with "VailZoomer", you're all set! The device will persist across reboots.
-                    </p>
-                  </div>
+                      <p className="text-xs text-gray-400">
+                        Verify with: <code className="bg-black px-1 rounded">pactl list sources short | grep -i vail</code>
+                      </p>
+                    </div>
+                  </details>
 
                   {/* AppImage note */}
                   <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3 text-sm">
