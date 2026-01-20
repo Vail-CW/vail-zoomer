@@ -23,7 +23,7 @@ This allows you to simultaneously speak and send Morse code in video calls, with
 
 ### Step 1: Download Vail Zoomer
 
-Download the latest release for your operating system from the [Releases](https://github.com/YOUR_USERNAME/vail-zoomer/releases) page:
+Download the latest release for your operating system from the [Releases](https://github.com/Vail-CW/vail-zoomer/releases) page:
 
 - **Windows**: `Vail.Zoomer_x.x.x_x64-setup.exe` or portable `.msi`
 - **macOS (Apple Silicon)**: `Vail.Zoomer_x.x.x_aarch64.dmg`
@@ -319,7 +319,7 @@ Then run it:
 ### Build Steps
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/vail-zoomer.git
+git clone https://github.com/Vail-CW/vail-zoomer.git
 cd vail-zoomer
 
 # Install dependencies
