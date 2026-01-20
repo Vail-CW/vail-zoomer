@@ -190,56 +190,102 @@ function HelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }
 
               {selectedOS === "windows" && (
                 <div className="space-y-4">
-                  <h4 className="font-semibold text-amber-400">VB-Cable (Free)</h4>
-                  <ol className="list-decimal list-inside space-y-3 text-gray-300">
-                    <li>
-                      Download VB-Cable from{" "}
-                      <a
-                        href="https://vb-audio.com/Cable/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-amber-400 underline hover:text-amber-300"
-                      >
-                        vb-audio.com/Cable
-                      </a>
-                    </li>
-                    <li>Extract the downloaded ZIP file</li>
-                    <li>
-                      <strong>Right-click</strong> <code className="bg-gray-900 px-1 rounded">VBCABLE_Setup_x64.exe</code> and select <strong>"Run as administrator"</strong>
-                    </li>
-                    <li>Click <strong>Install Driver</strong> and wait for completion</li>
-                    <li>
-                      <strong className="text-amber-400">Restart your computer</strong> (required!)
-                    </li>
-                  </ol>
+                  <h4 className="font-semibold text-amber-400">VB-Cable (Free Virtual Audio Driver)</h4>
 
                   <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm text-gray-400 mb-2">After restart, verify installation:</p>
-                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-1">
-                      <li>Open <strong>Sound Settings</strong> (right-click speaker icon)</li>
-                      <li>Look for <strong>"CABLE Input"</strong> under Output devices</li>
-                      <li>Look for <strong>"CABLE Output"</strong> under Input devices</li>
+                    <p className="text-sm font-medium text-white mb-2">Step 1: Download VB-Cable</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-2">
+                      <li>
+                        Go to{" "}
+                        <a
+                          href="https://vb-audio.com/Cable/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-amber-400 underline hover:text-amber-300"
+                        >
+                          vb-audio.com/Cable
+                        </a>
+                      </li>
+                      <li>Click the big <strong>"Download"</strong> button</li>
+                      <li>Save the ZIP file to your Downloads folder</li>
                     </ol>
+                  </div>
+
+                  <div className="bg-gray-900 p-3 rounded-lg">
+                    <p className="text-sm font-medium text-white mb-2">Step 2: Install the Driver</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-2">
+                      <li>Open your Downloads folder and find the ZIP file</li>
+                      <li>Right-click the ZIP → <strong>"Extract All"</strong> → <strong>"Extract"</strong></li>
+                      <li>Open the extracted folder</li>
+                      <li>
+                        <strong>Right-click</strong> on <code className="bg-gray-800 px-1 rounded">VBCABLE_Setup_x64.exe</code>
+                        <br/><span className="text-gray-400 text-xs">(Use VBCABLE_Setup.exe if you have 32-bit Windows)</span>
+                      </li>
+                      <li>Select <strong>"Run as administrator"</strong></li>
+                      <li>Click <strong>"Install Driver"</strong> when the window appears</li>
+                      <li>Wait for "Installation Complete" message, then click OK</li>
+                    </ol>
+                  </div>
+
+                  <div className="bg-red-900/30 border border-red-700 rounded-lg p-3">
+                    <p className="text-sm font-medium text-red-400 mb-1">Step 3: Restart Your Computer</p>
+                    <p className="text-gray-300 text-sm">
+                      <strong>This is required!</strong> The virtual audio device will NOT appear until you restart.
+                      Save your work and restart now.
+                    </p>
+                  </div>
+
+                  <div className="bg-gray-900 p-3 rounded-lg">
+                    <p className="text-sm font-medium text-white mb-2">Step 4: Verify Installation</p>
+                    <p className="text-xs text-gray-400 mb-2">After your computer restarts:</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-1">
+                      <li>Right-click the speaker icon in your taskbar (bottom right)</li>
+                      <li>Click <strong>"Sound settings"</strong></li>
+                      <li>Scroll down and click <strong>"More sound settings"</strong></li>
+                      <li>In the <strong>Playback</strong> tab, look for <strong>"CABLE Input"</strong></li>
+                      <li>In the <strong>Recording</strong> tab, look for <strong>"CABLE Output"</strong></li>
+                    </ol>
+                    <p className="text-xs text-gray-400 mt-2">
+                      If you see both devices, you're ready to go!
+                    </p>
+                  </div>
+
+                  <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3 text-sm">
+                    <strong className="text-yellow-400">VB-Cable not appearing after restart?</strong>
+                    <ul className="text-gray-300 mt-2 space-y-1 list-disc list-inside">
+                      <li>Make sure you ran the installer as Administrator</li>
+                      <li>Check <strong>Windows Security → Protection history</strong> - Windows may have blocked the driver</li>
+                      <li>Try running the installer again as Administrator</li>
+                      <li>On Windows 11: You may need to temporarily disable <strong>Core Isolation / Memory Integrity</strong> in Windows Security during installation</li>
+                    </ul>
                   </div>
                 </div>
               )}
 
               {selectedOS === "macos" && (
                 <div className="space-y-4">
-                  <h4 className="font-semibold text-amber-400">BlackHole (Free & Open Source)</h4>
+                  <h4 className="font-semibold text-amber-400">BlackHole (Free Virtual Audio Driver)</h4>
 
-                  <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm font-medium text-white mb-2">Option 1: Homebrew (Recommended)</p>
+                  {/* Option A: Homebrew */}
+                  <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3">
+                    <p className="text-sm font-medium text-blue-400 mb-2">Option A: Install with Homebrew (if you have it)</p>
+                    <p className="text-xs text-gray-400 mb-2">
+                      Open Terminal (press <kbd className="bg-gray-700 px-1 rounded">Cmd</kbd> + <kbd className="bg-gray-700 px-1 rounded">Space</kbd>, type "Terminal", press Enter) and run:
+                    </p>
                     <code className="block bg-black p-2 rounded text-green-400 text-sm">
                       brew install blackhole-2ch
                     </code>
+                    <p className="text-xs text-gray-400 mt-2">
+                      Don't have Homebrew? Use Option B below instead.
+                    </p>
                   </div>
 
+                  {/* Option B: Manual Download */}
                   <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm font-medium text-white mb-2">Option 2: Manual Download</p>
-                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-1">
+                    <p className="text-sm font-medium text-white mb-2">Option B: Manual Download (no Homebrew needed)</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-2">
                       <li>
-                        Download from{" "}
+                        Go to{" "}
                         <a
                           href="https://existential.audio/blackhole/"
                           target="_blank"
@@ -249,72 +295,165 @@ function HelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }
                           existential.audio/blackhole
                         </a>
                       </li>
-                      <li>Open the .pkg installer</li>
-                      <li>Follow the prompts (grant permissions when asked)</li>
+                      <li>Click <strong>"Download BlackHole 2ch"</strong> (you may need to enter your email)</li>
+                      <li>Open the downloaded <code className="bg-gray-800 px-1 rounded">.pkg</code> file</li>
+                      <li>Follow the installer prompts - click <strong>Continue</strong> → <strong>Install</strong></li>
+                      <li>Enter your Mac password when asked</li>
                     </ol>
                   </div>
 
-                  <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3 text-sm">
-                    <strong className="text-yellow-400">Security Note:</strong>
-                    <p className="text-gray-300 mt-1">
-                      macOS may block the system extension. Go to <strong>System Settings → Privacy &
-                      Security</strong>, scroll down, and click <strong>"Allow"</strong> next to the
-                      BlackHole message.
+                  {/* Security Steps */}
+                  <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3">
+                    <p className="text-sm font-medium text-yellow-400 mb-2">Important: Allow the System Extension</p>
+                    <p className="text-gray-300 text-sm mb-2">
+                      macOS blocks audio drivers by default. You must allow it:
+                    </p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-1">
+                      <li>Open <strong>System Settings</strong> (click Apple menu → System Settings)</li>
+                      <li>Click <strong>"Privacy & Security"</strong> in the sidebar</li>
+                      <li>Scroll down - you should see a message about BlackHole being blocked</li>
+                      <li>Click <strong>"Allow"</strong> next to the message</li>
+                      <li>Enter your password if prompted</li>
+                      <li><strong>Restart your Mac</strong> for the changes to take effect</li>
+                    </ol>
+                  </div>
+
+                  {/* Verification */}
+                  <div className="bg-gray-900 p-3 rounded-lg">
+                    <p className="text-sm font-medium text-white mb-2">Verify Installation</p>
+                    <p className="text-xs text-gray-400 mb-2">After restarting:</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-1">
+                      <li>Open <strong>System Settings → Sound</strong></li>
+                      <li>Click the <strong>"Output"</strong> tab</li>
+                      <li>Look for <strong>"BlackHole 2ch"</strong> in the list</li>
+                    </ol>
+                    <p className="text-xs text-gray-400 mt-2">
+                      If you see it, you're ready! Works on both Intel and Apple Silicon Macs.
                     </p>
                   </div>
 
-                  <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm text-gray-400 mb-2">Verify installation:</p>
-                    <ol className="list-decimal list-inside text-sm text-gray-300 space-y-1">
-                      <li>Open <strong>System Settings → Sound</strong></li>
-                      <li>Look for <strong>"BlackHole 2ch"</strong> in Output devices</li>
-                    </ol>
-                  </div>
+                  {/* Multi-output device (optional) */}
+                  <details className="bg-gray-900 rounded-lg">
+                    <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg text-sm font-medium">
+                      Optional: Hear sidetone in your headphones while sending to Zoom
+                    </summary>
+                    <div className="p-3 pt-0 text-sm text-gray-300 space-y-2">
+                      <p className="text-xs text-gray-400">
+                        By default, if you send to BlackHole, you won't hear the sidetone locally.
+                        To hear it AND send to Zoom, create a Multi-Output Device:
+                      </p>
+                      <ol className="list-decimal list-inside space-y-1 text-sm">
+                        <li>Open <strong>Audio MIDI Setup</strong> (search in Spotlight or find in /Applications/Utilities/)</li>
+                        <li>Click the <strong>+</strong> button in the bottom left</li>
+                        <li>Select <strong>"Create Multi-Output Device"</strong></li>
+                        <li>Check both your headphones/speakers AND BlackHole 2ch</li>
+                        <li>Optionally rename it to "Vail Zoomer Output"</li>
+                        <li>In Vail Zoomer, select this new device as your output</li>
+                      </ol>
+                    </div>
+                  </details>
                 </div>
               )}
 
               {selectedOS === "linux" && (
                 <div className="space-y-4">
-                  <h4 className="font-semibold text-amber-400">PulseAudio / PipeWire Virtual Sink</h4>
+                  <h4 className="font-semibold text-amber-400">Virtual Audio Device Setup for Linux</h4>
                   <p className="text-gray-300 text-sm">
-                    Linux uses software virtual sinks. Choose based on your audio system.
+                    Linux uses software-based virtual audio. Follow the steps below carefully.
                   </p>
 
+                  {/* Step 1: Check audio system */}
                   <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm font-medium text-white mb-2">For PulseAudio:</p>
+                    <p className="text-sm font-medium text-white mb-2">Step 1: Check which audio system you have</p>
+                    <p className="text-xs text-gray-400 mb-2">
+                      Open a terminal (press <kbd className="bg-gray-700 px-1 rounded">Ctrl</kbd> + <kbd className="bg-gray-700 px-1 rounded">Alt</kbd> + <kbd className="bg-gray-700 px-1 rounded">T</kbd>) and run:
+                    </p>
                     <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
-                      pactl load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer"
+                      pactl info | grep "Server Name"
                     </code>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Add to <code>~/.config/pulse/default.pa</code> to make permanent.
+                    <p className="text-xs text-gray-400 mt-2">
+                      If it says <strong>"PipeWire"</strong> → follow PipeWire instructions below<br/>
+                      If it says <strong>"PulseAudio"</strong> → follow PulseAudio instructions below
                     </p>
                   </div>
 
-                  <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm font-medium text-white mb-2">For PipeWire (Ubuntu 22.04+, Fedora 34+):</p>
-                    <p className="text-xs text-gray-400 mb-2">Create <code>~/.config/pipewire/pipewire.conf.d/vail.conf</code>:</p>
+                  {/* PipeWire Instructions */}
+                  <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3">
+                    <p className="text-sm font-medium text-blue-400 mb-2">For PipeWire (Ubuntu 22.04+, Fedora 34+, most modern distros)</p>
+
+                    <p className="text-xs text-gray-300 mb-2"><strong>Step 2a:</strong> Create the config folder (in terminal):</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-3">
+                      mkdir -p ~/.config/pipewire/pipewire.conf.d
+                    </code>
+
+                    <p className="text-xs text-gray-300 mb-2"><strong>Step 3a:</strong> Create the virtual device config file:</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-2">
+                      nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf
+                    </code>
+                    <p className="text-xs text-gray-400 mb-2">This opens a text editor. Paste this entire block:</p>
                     <pre className="bg-black p-2 rounded text-green-400 text-xs overflow-x-auto">
 {`context.objects = [
   { factory = adapter
     args = {
       factory.name = support.null-audio-sink
       node.name = "VailZoomer"
-      node.description = "Vail Zoomer"
+      node.description = "Vail Zoomer Output"
       media.class = Audio/Sink
       audio.position = [ FL FR ]
     }
   }
 ]`}
                     </pre>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Then run: <code>systemctl --user restart pipewire</code>
+                    <p className="text-xs text-gray-400 mt-2">
+                      Press <kbd className="bg-gray-700 px-1 rounded">Ctrl</kbd>+<kbd className="bg-gray-700 px-1 rounded">O</kbd> then <kbd className="bg-gray-700 px-1 rounded">Enter</kbd> to save, then <kbd className="bg-gray-700 px-1 rounded">Ctrl</kbd>+<kbd className="bg-gray-700 px-1 rounded">X</kbd> to exit.
+                    </p>
+
+                    <p className="text-xs text-gray-300 mt-3 mb-2"><strong>Step 4a:</strong> Restart PipeWire to apply changes:</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
+                      systemctl --user restart pipewire pipewire-pulse
+                    </code>
+                  </div>
+
+                  {/* PulseAudio Instructions */}
+                  <div className="bg-purple-900/30 border border-purple-700 rounded-lg p-3">
+                    <p className="text-sm font-medium text-purple-400 mb-2">For PulseAudio (older systems)</p>
+
+                    <p className="text-xs text-gray-300 mb-2"><strong>Step 2b:</strong> Create the config folder (in terminal):</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-3">
+                      mkdir -p ~/.config/pulse
+                    </code>
+
+                    <p className="text-xs text-gray-300 mb-2"><strong>Step 3b:</strong> Add the virtual device to your config:</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto mb-2">
+                      echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' &gt;&gt; ~/.config/pulse/default.pa
+                    </code>
+
+                    <p className="text-xs text-gray-300 mt-3 mb-2"><strong>Step 4b:</strong> Restart PulseAudio:</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
+                      pulseaudio -k && pulseaudio --start
+                    </code>
+                  </div>
+
+                  {/* Verification */}
+                  <div className="bg-gray-900 p-3 rounded-lg">
+                    <p className="text-sm font-medium text-white mb-2">Step 5: Verify it worked</p>
+                    <p className="text-xs text-gray-400 mb-2">Run this command - you should see "VailZoomer" in the output:</p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm overflow-x-auto">
+                      pactl list sinks short | grep -i vail
+                    </code>
+                    <p className="text-xs text-gray-400 mt-2">
+                      If you see a line with "VailZoomer", you're all set! The device will persist across reboots.
                     </p>
                   </div>
 
-                  <div className="bg-gray-900 p-3 rounded-lg">
-                    <p className="text-sm text-gray-400 mb-2">Verify installation:</p>
-                    <code className="block bg-black p-2 rounded text-green-400 text-sm">
-                      pactl list sinks short | grep -i vail
+                  {/* AppImage note */}
+                  <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3 text-sm">
+                    <strong className="text-yellow-400">AppImage won't open?</strong>
+                    <p className="text-gray-300 mt-1">
+                      You need to make it executable first. In terminal, navigate to your Downloads folder and run:
+                    </p>
+                    <code className="block bg-black p-2 rounded text-green-400 text-sm mt-2 overflow-x-auto">
+                      chmod +x vail-zoomer*.AppImage && ./vail-zoomer*.AppImage
                     </code>
                   </div>
                 </div>
@@ -368,17 +507,102 @@ function HelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }
                   </div>
                   <div>
                     <h4 className="font-medium text-white">Configure Your Video App</h4>
-                    <p className="text-gray-400 text-sm">
-                      In Zoom/Teams/Discord, set the <strong>microphone</strong> to the virtual audio device:
+                    <p className="text-gray-400 text-sm mb-2">
+                      Set your video app's <strong>microphone</strong> to the virtual audio device.
+                      Click below for your app:
                     </p>
-                    <ul className="text-gray-500 text-sm ml-4 list-disc list-inside mt-1">
-                      <li>Windows: "CABLE Output (VB-Audio...)"</li>
-                      <li>macOS: "BlackHole 2ch"</li>
-                      <li>Linux: "Monitor of VailZoomer"</li>
-                    </ul>
                   </div>
                 </div>
+              </div>
 
+              {/* Video App Setup Instructions */}
+              <div className="space-y-2 ml-11">
+                <details className="bg-gray-900 rounded-lg">
+                  <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg text-sm font-medium">
+                    Zoom Setup
+                  </summary>
+                  <div className="p-3 pt-0 text-sm text-gray-300">
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>Open Zoom and click the <strong>gear icon</strong> (Settings) in the top right</li>
+                      <li>Click <strong>"Audio"</strong> in the left sidebar</li>
+                      <li>Under <strong>"Microphone"</strong>, select:
+                        <ul className="ml-4 list-disc list-inside text-gray-400 mt-1">
+                          <li>Windows: <strong>"CABLE Output (VB-Audio Virtual Cable)"</strong></li>
+                          <li>macOS: <strong>"BlackHole 2ch"</strong></li>
+                          <li>Linux: <strong>"Monitor of VailZoomer"</strong></li>
+                        </ul>
+                      </li>
+                      <li><strong>Uncheck</strong> "Automatically adjust microphone volume"</li>
+                      <li>Click <strong>"Test Mic"</strong> to verify it's working</li>
+                    </ol>
+                  </div>
+                </details>
+
+                <details className="bg-gray-900 rounded-lg">
+                  <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg text-sm font-medium">
+                    Microsoft Teams Setup
+                  </summary>
+                  <div className="p-3 pt-0 text-sm text-gray-300">
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>Click your <strong>profile picture</strong> in the top right</li>
+                      <li>Click <strong>"Settings"</strong></li>
+                      <li>Click <strong>"Devices"</strong> in the left sidebar</li>
+                      <li>Under <strong>"Microphone"</strong>, select the virtual audio device:
+                        <ul className="ml-4 list-disc list-inside text-gray-400 mt-1">
+                          <li>Windows: <strong>"CABLE Output"</strong></li>
+                          <li>macOS: <strong>"BlackHole 2ch"</strong></li>
+                          <li>Linux: <strong>"Monitor of VailZoomer"</strong></li>
+                        </ul>
+                      </li>
+                      <li>Click <strong>"Make a test call"</strong> to verify</li>
+                    </ol>
+                  </div>
+                </details>
+
+                <details className="bg-gray-900 rounded-lg">
+                  <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg text-sm font-medium">
+                    Discord Setup
+                  </summary>
+                  <div className="p-3 pt-0 text-sm text-gray-300">
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>Click the <strong>gear icon</strong> (User Settings) next to your username</li>
+                      <li>Click <strong>"Voice & Video"</strong> in the left sidebar</li>
+                      <li>Under <strong>"Input Device"</strong>, select the virtual audio device:
+                        <ul className="ml-4 list-disc list-inside text-gray-400 mt-1">
+                          <li>Windows: <strong>"CABLE Output"</strong></li>
+                          <li>macOS: <strong>"BlackHole 2ch"</strong></li>
+                          <li>Linux: <strong>"Monitor of VailZoomer"</strong></li>
+                        </ul>
+                      </li>
+                      <li>Turn <strong>OFF</strong> "Automatically determine input sensitivity"</li>
+                      <li>Use the <strong>"Let's Check"</strong> button under Mic Test to verify</li>
+                    </ol>
+                  </div>
+                </details>
+
+                <details className="bg-gray-900 rounded-lg">
+                  <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg text-sm font-medium">
+                    Google Meet Setup
+                  </summary>
+                  <div className="p-3 pt-0 text-sm text-gray-300">
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>Join or start a meeting, then click the <strong>three dots</strong> (⋮) at the bottom</li>
+                      <li>Click <strong>"Settings"</strong></li>
+                      <li>Click <strong>"Audio"</strong></li>
+                      <li>Under <strong>"Microphone"</strong>, select the virtual audio device:
+                        <ul className="ml-4 list-disc list-inside text-gray-400 mt-1">
+                          <li>Windows: <strong>"CABLE Output"</strong></li>
+                          <li>macOS: <strong>"BlackHole 2ch"</strong></li>
+                          <li>Linux: <strong>"Monitor of VailZoomer"</strong></li>
+                        </ul>
+                      </li>
+                      <li>Speak or use Test Dit/Dah to see the input level indicator move</li>
+                    </ol>
+                  </div>
+                </details>
+              </div>
+
+              <div className="space-y-4 mt-4">
                 <div className="flex gap-3">
                   <div className="flex-shrink-0 w-8 h-8 bg-amber-600 rounded-full flex items-center justify-center font-bold">
                     4
@@ -415,7 +639,79 @@ function HelpModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }
 
           {activeTab === "troubleshooting" && (
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-white">Common Issues</h3>
+              <h3 className="text-lg font-semibold text-white">First Launch & Security</h3>
+
+              <details className="bg-yellow-900/30 border border-yellow-700 rounded-lg" open>
+                <summary className="p-3 cursor-pointer hover:bg-yellow-900/50 rounded-lg font-medium text-yellow-400">
+                  Windows: "Windows protected your PC" warning
+                </summary>
+                <div className="p-3 pt-0 text-sm text-gray-300 space-y-2">
+                  <p className="text-xs text-gray-400">
+                    This appears because the app isn't signed with an expensive certificate. It's safe to run.
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>When you see the blue "Windows protected your PC" screen, click <strong>"More info"</strong></li>
+                    <li>Click the <strong>"Run anyway"</strong> button that appears</li>
+                    <li>The app will now open normally</li>
+                  </ol>
+                  <p className="text-xs text-gray-400 mt-2">
+                    You only need to do this once. Windows will remember your choice.
+                  </p>
+                </div>
+              </details>
+
+              <details className="bg-yellow-900/30 border border-yellow-700 rounded-lg">
+                <summary className="p-3 cursor-pointer hover:bg-yellow-900/50 rounded-lg font-medium text-yellow-400">
+                  macOS: "App can't be opened" or "unidentified developer"
+                </summary>
+                <div className="p-3 pt-0 text-sm text-gray-300 space-y-2">
+                  <p className="text-xs text-gray-400">
+                    macOS blocks apps that aren't from the App Store by default.
+                  </p>
+                  <p className="font-medium text-white mt-2">Method 1: System Settings (try this first)</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Try to open the app (it will be blocked)</li>
+                    <li>Open <strong>System Settings → Privacy & Security</strong></li>
+                    <li>Scroll down - you'll see a message about Vail Zoomer being blocked</li>
+                    <li>Click <strong>"Open Anyway"</strong></li>
+                    <li>Click <strong>"Open"</strong> in the confirmation dialog</li>
+                  </ol>
+                  <p className="font-medium text-white mt-3">Method 2: Terminal (if Method 1 doesn't work)</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Open Terminal (Cmd+Space, type "Terminal", press Enter)</li>
+                    <li>Run this command:</li>
+                  </ol>
+                  <code className="block bg-black p-2 rounded text-green-400 text-sm mt-1">
+                    xattr -cr /Applications/Vail\ Zoomer.app
+                  </code>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Then try opening the app again. You only need to do this once.
+                  </p>
+                </div>
+              </details>
+
+              <details className="bg-yellow-900/30 border border-yellow-700 rounded-lg">
+                <summary className="p-3 cursor-pointer hover:bg-yellow-900/50 rounded-lg font-medium text-yellow-400">
+                  Linux: AppImage won't run
+                </summary>
+                <div className="p-3 pt-0 text-sm text-gray-300 space-y-2">
+                  <p className="text-xs text-gray-400">
+                    Linux requires you to make the file executable first.
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Open a terminal in your Downloads folder</li>
+                    <li>Run these commands:</li>
+                  </ol>
+                  <code className="block bg-black p-2 rounded text-green-400 text-sm mt-1">
+                    chmod +x vail-zoomer*.AppImage
+                  </code>
+                  <code className="block bg-black p-2 rounded text-green-400 text-sm mt-1">
+                    ./vail-zoomer*.AppImage
+                  </code>
+                </div>
+              </details>
+
+              <h3 className="text-lg font-semibold text-white mt-6">Common Issues</h3>
 
               <details className="bg-gray-900 rounded-lg">
                 <summary className="p-3 cursor-pointer hover:bg-gray-800 rounded-lg font-medium">
@@ -525,6 +821,7 @@ function App() {
   const [selectedMidiDevice, setSelectedMidiDevice] = useState<string | null>(null);
   const [audioStarted, setAudioStarted] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [currentOS, setCurrentOS] = useState<OSType>("windows");
 
   // Audio device state
   const [inputDevices, setInputDevices] = useState<string[]>([]);
@@ -554,9 +851,37 @@ function App() {
     output_device: null,
   });
 
+  // OS-specific device name helpers
+  const getVirtualDeviceNames = (os: OSType) => {
+    switch (os) {
+      case "macos":
+        return { output: "BlackHole 2ch", input: "BlackHole 2ch" };
+      case "linux":
+        return { output: "VailZoomer Sink", input: "VailZoomer Sink Monitor" };
+      default:
+        return { output: "CABLE Input", input: "CABLE Output" };
+    }
+  };
+
+  const virtualDeviceNames = getVirtualDeviceNames(currentOS);
+
   // Initialize on mount
   useEffect(() => {
     const initialize = async () => {
+      // Detect OS for platform-specific UI hints
+      try {
+        const os = platform();
+        if (os === "macos") {
+          setCurrentOS("macos");
+        } else if (os === "linux") {
+          setCurrentOS("linux");
+        } else {
+          setCurrentOS("windows");
+        }
+      } catch {
+        // Default to windows if detection fails
+      }
+
       // Load settings from backend first
       const savedSettings = await invoke<Settings>("get_settings");
       setSettings(savedSettings);
@@ -928,7 +1253,7 @@ function App() {
 
             {/* Right column: Output to Zoom */}
             <div className="space-y-2">
-              <h3 className="text-sm font-medium text-gray-300">Output to Zoom (VB-Cable)</h3>
+              <h3 className="text-sm font-medium text-gray-300">Output to Zoom ({virtualDeviceNames.output})</h3>
               <select
                 value={selectedOutputDevice || ""}
                 onChange={(e) => restartAudio(e.target.value || null, selectedInputDevice)}
@@ -1000,7 +1325,7 @@ function App() {
           )}
 
           <p className="text-xs text-gray-500 mt-2 text-right">
-            Select "CABLE Input" as output here, then "CABLE Output" as microphone in Zoom.
+            Select "{virtualDeviceNames.output}" as output here, then "{virtualDeviceNames.input}" as microphone in Zoom.
           </p>
         </div>
       </main>

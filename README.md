@@ -44,62 +44,91 @@ A virtual audio device creates a "loopback" that lets Vail Zoomer send mixed aud
 
 **VB-Cable** is a free virtual audio driver for Windows.
 
-#### Installation:
-1. Download VB-Cable from [vb-audio.com/Cable](https://vb-audio.com/Cable/)
-2. Extract the downloaded ZIP file
-3. **Right-click** `VBCABLE_Setup_x64.exe` (or `VBCABLE_Setup.exe` for 32-bit)
-4. Select **"Run as administrator"**
-5. Click **Install Driver**
-6. **Restart your computer** (required for the driver to work)
+#### Step 1: Download VB-Cable
+1. Go to [vb-audio.com/Cable](https://vb-audio.com/Cable/)
+2. Click the big **"Download"** button
+3. Save the ZIP file to your Downloads folder
 
-#### Verification:
-After restart, open **Sound Settings** and verify you see:
-- **CABLE Input (VB-Audio Virtual Cable)** - under playback devices
-- **CABLE Output (VB-Audio Virtual Cable)** - under recording devices
+#### Step 2: Install the Driver
+1. Open your Downloads folder and find the ZIP file (named something like `VBCABLE_Driver_Pack...`)
+2. **Right-click** the ZIP file → select **"Extract All"** → click **"Extract"**
+3. Open the extracted folder
+4. **Right-click** on `VBCABLE_Setup_x64.exe` and select **"Run as administrator"**
+   - (Use `VBCABLE_Setup.exe` if you have 32-bit Windows)
+5. Click **"Install Driver"** when the window appears
+6. Wait for the "Installation Complete" message, then click OK
+
+#### Step 3: Restart Your Computer
+⚠️ **This is required!** The virtual audio device will NOT appear until you restart. Save your work and restart now.
+
+#### Step 4: Verify Installation
+After your computer restarts:
+1. Right-click the speaker icon in your taskbar (bottom right)
+2. Click **"Sound settings"**
+3. Scroll down and click **"More sound settings"**
+4. In the **Playback** tab, look for **"CABLE Input (VB-Audio Virtual Cable)"**
+5. In the **Recording** tab, look for **"CABLE Output (VB-Audio Virtual Cable)"**
+
+If you see both devices, you're ready!
 
 #### Troubleshooting Windows:
-- If you don't see VB-Cable after restart, try running the installer again as administrator
-- Windows may block the driver - check Windows Security → Virus & threat protection → Protection history
-- For Windows 11: You may need to disable Secure Boot temporarily or use a signed driver
+- **VB-Cable not appearing after restart?**
+  - Make sure you ran the installer as Administrator
+  - Check **Windows Security → Virus & threat protection → Protection history** - Windows may have blocked the driver
+  - Try running the installer again as Administrator
+- **Windows 11 users**: You may need to temporarily disable **Core Isolation / Memory Integrity** in Windows Security during installation, then re-enable it after
 
 ---
 
 ### macOS: BlackHole
 
-**BlackHole** is a free, open-source virtual audio driver for macOS.
+**BlackHole** is a free, open-source virtual audio driver for macOS. Works on both Intel and Apple Silicon Macs.
 
-#### Installation (Homebrew - Recommended):
+#### Option A: Install with Homebrew (if you have it)
+Open Terminal (press Cmd+Space, type "Terminal", press Enter) and run:
 ```bash
 brew install blackhole-2ch
 ```
 
-#### Installation (Manual):
-1. Download from [existential.audio/blackhole](https://existential.audio/blackhole/)
-2. Open the `.pkg` installer
-3. Follow the installation prompts
-4. **Grant microphone permissions** when prompted
-5. You may need to allow the system extension in **System Settings → Privacy & Security**
+Don't have Homebrew? Use Option B below instead.
 
-#### Creating a Multi-Output Device (for local monitoring):
-If you want to hear the sidetone locally while also sending to Zoom:
+#### Option B: Manual Download
+1. Go to [existential.audio/blackhole](https://existential.audio/blackhole/)
+2. Click **"Download BlackHole 2ch"** (you may need to enter your email)
+3. Open the downloaded `.pkg` file
+4. Follow the installer prompts - click **Continue** → **Install**
+5. Enter your Mac password when asked
 
-1. Open **Audio MIDI Setup** (search in Spotlight or find in `/Applications/Utilities/`)
+#### Allow the System Extension (Important!)
+macOS blocks audio drivers by default. You must allow it:
+
+1. Open **System Settings** (click Apple menu → System Settings)
+2. Click **"Privacy & Security"** in the sidebar
+3. Scroll down - you should see a message about BlackHole being blocked
+4. Click **"Allow"** next to the message
+5. Enter your password if prompted
+6. **Restart your Mac** for the changes to take effect
+
+#### Verify Installation
+After restarting:
+1. Open **System Settings → Sound**
+2. Click the **"Output"** tab
+3. Look for **"BlackHole 2ch"** in the list
+
+#### Optional: Multi-Output Device (hear sidetone while sending to Zoom)
+By default, if you send to BlackHole, you won't hear the sidetone locally. To hear it AND send to Zoom:
+
+1. Open **Audio MIDI Setup** (search in Spotlight or find in /Applications/Utilities/)
 2. Click the **+** button in the bottom left
-3. Select **Create Multi-Output Device**
-4. Check both:
-   - Your speakers/headphones
-   - BlackHole 2ch
+3. Select **"Create Multi-Output Device"**
+4. Check both your headphones/speakers AND BlackHole 2ch
 5. Optionally rename it to "Vail Zoomer Output"
-
-#### Verification:
-Open **System Settings → Sound** and verify you see:
-- **BlackHole 2ch** under output devices
+6. In Vail Zoomer, select this new device as your output
 
 #### Troubleshooting macOS:
 - **"System Extension Blocked"**: Go to System Settings → Privacy & Security → scroll down and click "Allow"
-- **No audio**: Ensure BlackHole is selected as output in Vail Zoomer
-- **Catalina/Big Sur+**: You may need to restart after allowing the system extension
-- **Apple Silicon (M1/M2/M3)**: BlackHole works natively, no Rosetta needed
+- **Still not working?** You may need to restart after allowing the system extension
+- **Apple Silicon (M1/M2/M3/M4)**: BlackHole works natively, no Rosetta needed
 
 ---
 
@@ -107,126 +136,165 @@ Open **System Settings → Sound** and verify you see:
 
 Linux uses software-based virtual audio devices through PulseAudio or PipeWire.
 
-#### For PulseAudio:
-
-Create a virtual sink (loopback device):
-
+#### Step 1: Check Which Audio System You Have
+Open a terminal (press Ctrl+Alt+T) and run:
 ```bash
-# Create a null sink (virtual output device)
-pactl load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"
-
-# Create a loopback to capture from the virtual sink
-pactl load-module module-loopback source=VailZoomer.monitor sink=@DEFAULT_SINK@ latency_msec=10
+pactl info | grep "Server Name"
 ```
 
-To make this permanent, add to `~/.config/pulse/default.pa` or `/etc/pulse/default.pa`:
-```
-load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"
-```
+- If it says **"PipeWire"** → follow PipeWire instructions below
+- If it says **"PulseAudio"** → follow PulseAudio instructions below
 
-#### For PipeWire (Ubuntu 22.04+, Fedora 34+):
+---
 
+#### For PipeWire (Ubuntu 22.04+, Fedora 34+, most modern distros)
+
+**Step 2a: Create the config folder**
 ```bash
-# Create a virtual sink
-pw-cli create-node adapter factory.name=support.null-audio-sink media.class=Audio/Sink object.linger=1 node.name=VailZoomer node.description="Vail Zoomer Output"
+mkdir -p ~/.config/pipewire/pipewire.conf.d
 ```
 
-Or use **qpwgraph** (graphical PipeWire patchbay) to route audio.
+**Step 3a: Create the virtual device config file**
+```bash
+nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf
+```
 
-To make persistent with PipeWire, create `~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf`:
+This opens a text editor. Paste this entire block:
 ```
 context.objects = [
-    { factory = adapter
-        args = {
-            factory.name     = support.null-audio-sink
-            node.name        = "VailZoomer"
-            node.description = "Vail Zoomer Output"
-            media.class      = Audio/Sink
-            audio.position   = [ FL FR ]
-        }
+  { factory = adapter
+    args = {
+      factory.name = support.null-audio-sink
+      node.name = "VailZoomer"
+      node.description = "Vail Zoomer Output"
+      media.class = Audio/Sink
+      audio.position = [ FL FR ]
     }
+  }
 ]
 ```
 
-Then restart PipeWire:
+Press **Ctrl+O** then **Enter** to save, then **Ctrl+X** to exit.
+
+**Step 4a: Restart PipeWire to apply changes**
 ```bash
-systemctl --user restart pipewire
+systemctl --user restart pipewire pipewire-pulse
 ```
 
-#### Verification:
+---
+
+#### For PulseAudio (older systems)
+
+**Step 2b: Create the config folder**
 ```bash
-# PulseAudio
+mkdir -p ~/.config/pulse
+```
+
+**Step 3b: Add the virtual device to your config**
+```bash
+echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' >> ~/.config/pulse/default.pa
+```
+
+**Step 4b: Restart PulseAudio**
+```bash
+pulseaudio -k && pulseaudio --start
+```
+
+---
+
+#### Step 5: Verify Installation
+Run this command - you should see "VailZoomer" in the output:
+```bash
 pactl list sinks short | grep -i vail
-
-# PipeWire
-pw-cli list-objects | grep -i vail
 ```
+
+If you see a line with "VailZoomer", you're all set! The device will persist across reboots.
 
 #### Troubleshooting Linux:
-- **No virtual device**: Check if PulseAudio/PipeWire is running: `systemctl --user status pulseaudio` or `pipewire`
-- **Permission errors**: Add your user to the `audio` group: `sudo usermod -a -G audio $USER`
-- **AppImage won't run**: Make executable with `chmod +x vail-zoomer*.AppImage`
+- **No virtual device**: Check if PulseAudio/PipeWire is running: `systemctl --user status pulseaudio` or `systemctl --user status pipewire`
+- **Permission errors**: Add your user to the `audio` group: `sudo usermod -a -G audio $USER` (then log out and back in)
+- **AppImage won't run**: Make it executable first: `chmod +x vail-zoomer*.AppImage`
 - **MIDI not detected**: Install ALSA MIDI support: `sudo apt install libasound2-plugins`
 
 ---
 
 ## Using Vail Zoomer
 
-### Initial Setup
+### Quick Start
 
 1. **Connect your MIDI keyer** before launching the app
 2. **Launch Vail Zoomer**
-3. Configure these settings:
+3. Configure audio devices (see below)
+4. Configure your video app (see below)
+5. Test with the Dit/Dah buttons
+
+### Configuring Vail Zoomer
 
 #### MIDI Section
-- Select your MIDI device from the dropdown
-- Click **Connect** to establish connection
+- Your MIDI device should appear automatically - click on it to connect
 - The status indicator will turn green when connected
 
 #### Keyer Settings
 - **Keyer Type**: Match your physical keyer (Straight Key, Iambic A/B, etc.)
-- **WPM**: Set your preferred words-per-minute (5-50)
+- **WPM**: Set your preferred words-per-minute (5-50) - only for iambic keyers
 - **Sidetone Frequency**: Adjust tone pitch (400-1000 Hz)
 - Use **Test Dit/Dah** buttons to verify audio is working
 
 #### Audio Routing
-- **Microphone**: Select your microphone input
-- **Output Device**: Select the **virtual audio device** (VB-Cable, BlackHole, or VailZoomer sink)
-- **Local Monitoring** (optional): Select your speakers/headphones to hear sidetone locally
+- **Microphone Input**: Select your microphone
+- **Output to Zoom**: Select the **virtual audio device**:
+  - Windows: "CABLE Input (VB-Audio Virtual Cable)"
+  - macOS: "BlackHole 2ch"
+  - Linux: "VailZoomer" or "Vail Zoomer Output"
 
 #### Sidetone Routing Mode
-- **Output Only**: Sidetone goes to Zoom only (you won't hear it locally)
+- **Zoom Only**: Sidetone goes to Zoom only (you won't hear it locally) - use this if your Vail adapter has its own sidetone speaker
 - **Local Only**: Sidetone goes to your speakers only (Zoom won't hear it)
 - **Both**: Sidetone goes to both Zoom and your local speakers
+
+---
 
 ### Configuring Your Video Conferencing App
 
 #### Zoom
-1. Open Zoom → **Settings** → **Audio**
-2. Set **Microphone** to:
-   - Windows: `CABLE Output (VB-Audio Virtual Cable)`
-   - macOS: `BlackHole 2ch`
-   - Linux: `Monitor of VailZoomer` or `Vail Zoomer Output`
-3. Uncheck "Automatically adjust microphone volume"
+1. Open Zoom and click the **gear icon** (Settings) in the top right
+2. Click **"Audio"** in the left sidebar
+3. Under **"Microphone"**, select:
+   - Windows: **"CABLE Output (VB-Audio Virtual Cable)"**
+   - macOS: **"BlackHole 2ch"**
+   - Linux: **"Monitor of VailZoomer"**
+4. **Uncheck** "Automatically adjust microphone volume"
+5. Click **"Test Mic"** to verify it's working
 
 #### Microsoft Teams
-1. Click your profile → **Settings** → **Devices**
-2. Set **Microphone** to the virtual audio device
+1. Click your **profile picture** in the top right
+2. Click **"Settings"**
+3. Click **"Devices"** in the left sidebar
+4. Under **"Microphone"**, select the virtual audio device:
+   - Windows: **"CABLE Output"**
+   - macOS: **"BlackHole 2ch"**
+   - Linux: **"Monitor of VailZoomer"**
+5. Click **"Make a test call"** to verify
 
 #### Discord
-1. Open **User Settings** → **Voice & Video**
-2. Set **Input Device** to the virtual audio device
+1. Click the **gear icon** (User Settings) next to your username
+2. Click **"Voice & Video"** in the left sidebar
+3. Under **"Input Device"**, select the virtual audio device:
+   - Windows: **"CABLE Output"**
+   - macOS: **"BlackHole 2ch"**
+   - Linux: **"Monitor of VailZoomer"**
+4. Turn **OFF** "Automatically determine input sensitivity"
+5. Use the **"Let's Check"** button under Mic Test to verify
 
 #### Google Meet
-1. Click the three dots → **Settings** → **Audio**
-2. Set **Microphone** to the virtual audio device
-
-### Using the App
-
-1. **Start Audio**: Click the audio start button once devices are configured
-2. **Key CW**: Use your MIDI keyer - you'll see decoded characters appear in real-time
-3. **Speak**: Talk normally into your microphone - both voice and CW are mixed
-4. **Monitor levels**: Watch the input/output meters to ensure good levels
+1. Join or start a meeting, then click the **three dots** (⋮) at the bottom
+2. Click **"Settings"**
+3. Click **"Audio"**
+4. Under **"Microphone"**, select the virtual audio device:
+   - Windows: **"CABLE Output"**
+   - macOS: **"BlackHole 2ch"**
+   - Linux: **"Monitor of VailZoomer"**
+5. Speak or use Test Dit/Dah to see the input level indicator move
 
 ### Tips for Best Results
 
@@ -241,21 +309,22 @@ pw-cli list-objects | grep -i vail
 
 Operating systems display security warnings for apps that aren't code-signed by registered developers. This is normal for open-source software and doesn't mean the app is unsafe.
 
-### Windows: SmartScreen Warning
+### Windows: "Windows protected your PC"
 
-If you see **"Windows protected your PC"**:
+When you see the blue SmartScreen warning:
 
 1. Click **"More info"**
-2. Click **"Run anyway"**
+2. Click the **"Run anyway"** button that appears
+3. The app will now open normally
 
-This warning appears because the app isn't signed with an Extended Validation (EV) certificate. The app is safe to run.
+You only need to do this once. Windows will remember your choice.
 
 ### macOS: "App can't be opened" / "Unidentified Developer"
 
-**Method 1: System Settings**
+**Method 1: System Settings (try this first)**
 1. Try to open the app (it will be blocked)
 2. Open **System Settings → Privacy & Security**
-3. Scroll down and find the message about Vail Zoomer being blocked
+3. Scroll down - you'll see a message about Vail Zoomer being blocked
 4. Click **"Open Anyway"**
 5. Click **"Open"** in the confirmation dialog
 
@@ -263,16 +332,14 @@ This warning appears because the app isn't signed with an Extended Validation (E
 ```bash
 xattr -cr /Applications/Vail\ Zoomer.app
 ```
+Then try opening the app again.
 
 ### Linux: AppImage Won't Run
 
-Make the AppImage executable:
+Linux requires you to make the file executable first. Open a terminal in your Downloads folder and run:
+
 ```bash
 chmod +x vail-zoomer*.AppImage
-```
-
-Then run it:
-```bash
 ./vail-zoomer*.AppImage
 ```
 
@@ -283,19 +350,22 @@ Then run it:
 ### No Sound in Zoom/Video App
 1. Verify the virtual audio device is installed and appears in system audio settings
 2. Check that Vail Zoomer's output is set to the virtual device
-3. Verify the video app's microphone is set to the virtual device
-4. Check volume levels in Vail Zoomer aren't muted
+3. Verify the video app's microphone is set to the virtual device's **output/monitor**
+4. Check volume levels in Vail Zoomer aren't at 0%
+5. Use the Test Dit/Dah buttons to confirm audio is flowing
 
 ### MIDI Device Not Found
-1. Ensure the keyer is connected before launching Vail Zoomer
+1. Ensure the keyer is connected **before** launching Vail Zoomer
 2. Try unplugging and reconnecting the USB cable
-3. Check Device Manager (Windows) or System Information (macOS) for the MIDI device
-4. On Linux, ensure ALSA MIDI is installed
+3. Check if other apps are using the MIDI device (close them first)
+4. On Windows, check Device Manager for the device
+5. On macOS, check Audio MIDI Setup utility
+6. On Linux, run `aconnect -l` to list MIDI devices
 
 ### Crackling or Distorted Audio
-1. Lower the sidetone volume
+1. Lower the sidetone and microphone volumes
 2. Close other audio-intensive applications
-3. Try increasing buffer size if option is available
+3. Use wired headphones instead of Bluetooth
 4. Check CPU usage - audio processing needs consistent resources
 
 ### High Latency

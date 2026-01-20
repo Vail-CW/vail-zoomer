@@ -15,3 +15,13 @@ body {
   min-width: 320px;
   min-height: 100vh;
 }
+
+/* Fix dropdown options readability on Linux */
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background-color: #374151; /* gray-700 */
+  color: white;
+}
