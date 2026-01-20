@@ -3,6 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
 
+// Device info from backend (friendly name + internal name for selection)
+interface DeviceInfo {
+  display_name: string;
+  internal_name: string;
+}
+
 // Settings type matching Rust backend
 interface Settings {
   keyer_type: string;
@@ -824,8 +830,8 @@ function App() {
   const [currentOS, setCurrentOS] = useState<OSType>("windows");
 
   // Audio device state
-  const [inputDevices, setInputDevices] = useState<string[]>([]);
-  const [outputDevices, setOutputDevices] = useState<string[]>([]);
+  const [inputDevices, setInputDevices] = useState<DeviceInfo[]>([]);
+  const [outputDevices, setOutputDevices] = useState<DeviceInfo[]>([]);
   const [selectedInputDevice, setSelectedInputDevice] = useState<string | null>(null);
   const [selectedOutputDevice, setSelectedOutputDevice] = useState<string | null>(null);
   const [selectedLocalDevice, setSelectedLocalDevice] = useState<string | null>(null);
@@ -907,8 +913,8 @@ function App() {
 
       // List audio devices
       const [inputDeviceList, outputDeviceList] = await Promise.all([
-        invoke<string[]>("list_input_devices"),
-        invoke<string[]>("list_audio_devices"),
+        invoke<DeviceInfo[]>("list_input_devices"),
+        invoke<DeviceInfo[]>("list_audio_devices"),
       ]);
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
@@ -1230,8 +1236,8 @@ function App() {
               >
                 <option value="">System Default</option>
                 {inputDevices.map((device) => (
-                  <option key={device} value={device}>
-                    {device}
+                  <option key={device.internal_name} value={device.internal_name}>
+                    {device.display_name}
                   </option>
                 ))}
               </select>
@@ -1261,8 +1267,8 @@ function App() {
               >
                 <option value="">System Default</option>
                 {outputDevices.map((device) => (
-                  <option key={device} value={device}>
-                    {device}
+                  <option key={device.internal_name} value={device.internal_name}>
+                    {device.display_name}
                   </option>
                 ))}
               </select>
@@ -1301,8 +1307,8 @@ function App() {
                   >
                     <option value="">System Default (Speakers/Headphones)</option>
                     {outputDevices.map((device) => (
-                      <option key={device} value={device}>
-                        {device}
+                      <option key={device.internal_name} value={device.internal_name}>
+                        {device.display_name}
                       </option>
                     ))}
                   </select>

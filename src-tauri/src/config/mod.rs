@@ -96,33 +96,66 @@ impl Settings {
 
     /// Load settings from disk, or return defaults if not found
     pub fn load() -> Self {
-        if let Some(path) = Self::config_path() {
-            if path.exists() {
-                if let Ok(contents) = fs::read_to_string(&path) {
-                    if let Ok(settings) = serde_json::from_str(&contents) {
-                        println!("Loaded settings from {:?}", path);
-                        return settings;
-                    }
-                }
+        let path = match Self::config_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("[settings] Could not determine config path");
+                return Self::default();
+            }
+        };
+
+        eprintln!("[settings] Config path: {:?}", path);
+
+        if !path.exists() {
+            eprintln!("[settings] Config file does not exist, using defaults");
+            return Self::default();
+        }
+
+        let contents = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[settings] Failed to read config file: {}", e);
+                return Self::default();
+            }
+        };
+
+        match serde_json::from_str(&contents) {
+            Ok(settings) => {
+                eprintln!("[settings] Loaded settings from {:?}", path);
+                settings
+            }
+            Err(e) => {
+                eprintln!("[settings] Failed to parse config file: {}", e);
+                eprintln!("[settings] File contents: {}", contents);
+                Self::default()
             }
         }
-        println!("Using default settings");
-        Self::default()
     }
 
     /// Save settings to disk
     pub fn save(&self) -> Result<(), String> {
+        use std::io::Write;
+
         let path = Self::config_path().ok_or("Could not determine config directory")?;
+        eprintln!("[settings] Saving to {:?}", path);
 
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {}", e))?;
         }
 
-        let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(&path, json).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
-        println!("Saved settings to {:?}", path);
+        // Write with explicit sync to ensure data reaches disk
+        let mut file = fs::File::create(&path)
+            .map_err(|e| format!("Failed to create config file: {}", e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
+        file.sync_all()
+            .map_err(|e| format!("Failed to sync config file: {}", e))?;
+
+        eprintln!("[settings] Successfully saved settings to {:?}", path);
         Ok(())
     }
 }

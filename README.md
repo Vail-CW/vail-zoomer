@@ -161,18 +161,28 @@ nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf
 
 This opens a text editor. Paste this entire block:
 ```
-context.objects = [
-  { factory = adapter
+context.modules = [
+  { name = libpipewire-module-loopback
     args = {
-      factory.name = support.null-audio-sink
-      node.name = "VailZoomer"
-      node.description = "Vail Zoomer Output"
-      media.class = Audio/Sink
-      audio.position = [ FL FR ]
+      node.description = "Vail Zoomer"
+      capture.props = {
+        node.name = "VailZoomer"
+        media.class = "Audio/Sink"
+        audio.position = [ FL FR ]
+      }
+      playback.props = {
+        node.name = "VailZoomerMic"
+        media.class = "Audio/Source"
+        audio.position = [ FL FR ]
+      }
     }
   }
 ]
 ```
+
+This creates two devices:
+- **VailZoomer** - The output device you'll select in Vail Zoomer
+- **VailZoomerMic** - The microphone input that Zoom will see
 
 Press **Ctrl+O** then **Enter** to save, then **Ctrl+X** to exit.
 
@@ -190,9 +200,13 @@ systemctl --user restart pipewire pipewire-pulse
 mkdir -p ~/.config/pulse
 ```
 
-**Step 3b: Add the virtual device to your config**
+**Step 3b: Add the virtual devices to your config**
 ```bash
+# Create null sink for Vail Zoomer output
 echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' >> ~/.config/pulse/default.pa
+
+# Create virtual microphone from the sink's monitor (this is what Zoom sees)
+echo 'load-module module-remap-source master=VailZoomer.monitor source_name=VailZoomerMic source_properties=device.description="Vail_Zoomer_Microphone"' >> ~/.config/pulse/default.pa
 ```
 
 **Step 4b: Restart PulseAudio**
@@ -203,18 +217,23 @@ pulseaudio -k && pulseaudio --start
 ---
 
 #### Step 5: Verify Installation
-Run this command - you should see "VailZoomer" in the output:
+Run these commands to verify both devices were created:
 ```bash
+# Check for the output device (sink)
 pactl list sinks short | grep -i vail
+
+# Check for the microphone input (source) - this is what Zoom uses
+pactl list sources short | grep -i vail
 ```
 
-If you see a line with "VailZoomer", you're all set! The device will persist across reboots.
+If you see "VailZoomer" in the sinks and "VailZoomerMic" in the sources, you're all set! The devices will persist across reboots.
 
 #### Troubleshooting Linux:
 - **No virtual device**: Check if PulseAudio/PipeWire is running: `systemctl --user status pulseaudio` or `systemctl --user status pipewire`
 - **Permission errors**: Add your user to the `audio` group: `sudo usermod -a -G audio $USER` (then log out and back in)
 - **AppImage won't run**: Make it executable first: `chmod +x vail-zoomer*.AppImage`
 - **MIDI not detected**: Install ALSA MIDI support: `sudo apt install libasound2-plugins`
+- **Zoom doesn't show the virtual microphone**: Edit `~/.config/zoomus.conf` and set `system.audio.type=default` (instead of `alsa`), then restart Zoom
 
 ---
 
@@ -262,7 +281,7 @@ If you see a line with "VailZoomer", you're all set! The device will persist acr
 3. Under **"Microphone"**, select:
    - Windows: **"CABLE Output (VB-Audio Virtual Cable)"**
    - macOS: **"BlackHole 2ch"**
-   - Linux: **"Monitor of VailZoomer"**
+   - Linux: **"Vail Zoomer Microphone"** (or "VailZoomerMic")
 4. **Uncheck** "Automatically adjust microphone volume"
 5. Click **"Test Mic"** to verify it's working
 
@@ -273,7 +292,7 @@ If you see a line with "VailZoomer", you're all set! The device will persist acr
 4. Under **"Microphone"**, select the virtual audio device:
    - Windows: **"CABLE Output"**
    - macOS: **"BlackHole 2ch"**
-   - Linux: **"Monitor of VailZoomer"**
+   - Linux: **"Vail Zoomer Microphone"** (or "VailZoomerMic")
 5. Click **"Make a test call"** to verify
 
 #### Discord
@@ -282,7 +301,7 @@ If you see a line with "VailZoomer", you're all set! The device will persist acr
 3. Under **"Input Device"**, select the virtual audio device:
    - Windows: **"CABLE Output"**
    - macOS: **"BlackHole 2ch"**
-   - Linux: **"Monitor of VailZoomer"**
+   - Linux: **"Vail Zoomer Microphone"** (or "VailZoomerMic")
 4. Turn **OFF** "Automatically determine input sensitivity"
 5. Use the **"Let's Check"** button under Mic Test to verify
 
@@ -293,7 +312,7 @@ If you see a line with "VailZoomer", you're all set! The device will persist acr
 4. Under **"Microphone"**, select the virtual audio device:
    - Windows: **"CABLE Output"**
    - macOS: **"BlackHole 2ch"**
-   - Linux: **"Monitor of VailZoomer"**
+   - Linux: **"Vail Zoomer Microphone"** (or "VailZoomerMic")
 5. Speak or use Test Dit/Dah to see the input level indicator move
 
 ### Tips for Best Results

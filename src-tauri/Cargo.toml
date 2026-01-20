@@ -21,6 +21,9 @@ parking_lot = "0.12"
 ringbuf = "0.4"
 dirs = "5"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+pulsectl-rs = "0.3"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

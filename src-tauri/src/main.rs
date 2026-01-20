@@ -12,7 +12,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-use audio::AudioEngineHandle;
+use audio::{AudioEngineHandle, DeviceInfo};
 use input::{MidiHandler, MidiEvent};
 use cw::CwEngine;
 use config::Settings;
@@ -49,7 +49,7 @@ fn get_settings(state: tauri::State<AppState>) -> Settings {
 }
 
 #[tauri::command]
-fn update_settings(state: tauri::State<AppState>, settings: Settings) {
+fn update_settings(state: tauri::State<AppState>, settings: Settings) -> Result<(), String> {
     let mut current = state.settings.lock();
     *current = settings.clone();
 
@@ -94,10 +94,8 @@ fn update_settings(state: tauri::State<AppState>, settings: Settings) {
         let _ = handler.send_wpm(settings.wpm as u8);
     }
 
-    // Save settings to disk
-    if let Err(e) = settings.save() {
-        eprintln!("Failed to save settings: {}", e);
-    }
+    // Save settings to disk and return any errors to the frontend
+    settings.save()
 }
 
 #[tauri::command]
@@ -119,7 +117,7 @@ fn connect_midi_device(state: tauri::State<AppState>, device_name: String) -> Re
 }
 
 #[tauri::command]
-fn list_audio_devices() -> Vec<String> {
+fn list_audio_devices() -> Vec<DeviceInfo> {
     AudioEngineHandle::list_output_devices()
 }
 
@@ -142,7 +140,7 @@ fn get_output_level(state: tauri::State<AppState>) -> f32 {
 }
 
 #[tauri::command]
-fn list_input_devices() -> Vec<String> {
+fn list_input_devices() -> Vec<DeviceInfo> {
     AudioEngineHandle::list_input_devices()
 }
 

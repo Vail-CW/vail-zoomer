@@ -10,6 +10,15 @@ use ringbuf::{HeapRb, traits::{Producer, Consumer, Split}};
 
 pub use sidetone::SidetoneGenerator;
 
+/// Device info with display name and internal name for selection
+#[derive(Clone, serde::Serialize)]
+pub struct DeviceInfo {
+    /// User-friendly display name
+    pub display_name: String,
+    /// Internal name used for device selection (cpal name)
+    pub internal_name: String,
+}
+
 /// Ring buffer size for mic audio (holds ~100ms at 48kHz)
 const RING_BUFFER_SIZE: usize = 4800;
 
@@ -102,25 +111,51 @@ impl AudioEngineHandle {
         })
     }
 
-    /// List available audio output devices
-    pub fn list_output_devices() -> Vec<String> {
+    /// List available audio output devices with friendly names
+    pub fn list_output_devices() -> Vec<DeviceInfo> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(devices) = list_pulseaudio_sinks() {
+                return devices;
+            }
+        }
+
+        // Fallback to cpal names (used on Windows/macOS or if PulseAudio unavailable)
         let host = cpal::default_host();
         host.output_devices()
             .map(|devices| {
                 devices
-                    .filter_map(|d| d.name().ok())
+                    .filter_map(|d| {
+                        d.name().ok().map(|name| DeviceInfo {
+                            display_name: name.clone(),
+                            internal_name: name,
+                        })
+                    })
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// List available audio input devices
-    pub fn list_input_devices() -> Vec<String> {
+    /// List available audio input devices with friendly names
+    pub fn list_input_devices() -> Vec<DeviceInfo> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(devices) = list_pulseaudio_sources() {
+                return devices;
+            }
+        }
+
+        // Fallback to cpal names (used on Windows/macOS or if PulseAudio unavailable)
         let host = cpal::default_host();
         host.input_devices()
             .map(|devices| {
                 devices
-                    .filter_map(|d| d.name().ok())
+                    .filter_map(|d| {
+                        d.name().ok().map(|name| DeviceInfo {
+                            display_name: name.clone(),
+                            internal_name: name,
+                        })
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -626,7 +661,7 @@ fn build_local_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     is_key_down: Arc<AtomicBool>,
     channels: usize,
 ) -> Result<Stream, String> {
-    let stream = device
+    let stream_result = device
         .build_output_stream(
             config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
@@ -648,5 +683,100 @@ fn build_local_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
         )
         .map_err(|e| e.to_string())?;
 
-    Ok(stream)
+    Ok(stream_result)
+}
+
+// Linux-specific PulseAudio device enumeration for friendly names
+// PipeWire also supports these APIs through PulseAudio compatibility
+
+#[cfg(target_os = "linux")]
+fn list_pulseaudio_sinks() -> Option<Vec<DeviceInfo>> {
+    use pulsectl::controllers::SinkController;
+    use pulsectl::controllers::DeviceControl;
+
+    let mut handler = SinkController::create().ok()?;
+    let devices = handler.list_devices().ok()?;
+
+    // Get cpal device names for mapping
+    let host = cpal::default_host();
+    let cpal_devices: Vec<String> = host
+        .output_devices()
+        .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
+        .unwrap_or_default();
+
+    let result: Vec<DeviceInfo> = devices
+        .into_iter()
+        .filter_map(|dev| {
+            let description = dev.description.clone()?;
+            let pa_name = dev.name.clone()?;
+
+            // Try to find matching cpal device
+            // cpal on Linux uses ALSA names which may contain the PulseAudio device name
+            let internal_name = cpal_devices
+                .iter()
+                .find(|cpal_name| {
+                    // Check if cpal name contains the PA device name or vice versa
+                    cpal_name.contains(&pa_name) || pa_name.contains(cpal_name.as_str())
+                })
+                .cloned()
+                // If no match found, use PulseAudio name directly
+                // (cpal may be using PulseAudio backend)
+                .unwrap_or_else(|| pa_name.clone());
+
+            Some(DeviceInfo {
+                display_name: description,
+                internal_name,
+            })
+        })
+        .collect();
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn list_pulseaudio_sources() -> Option<Vec<DeviceInfo>> {
+    use pulsectl::controllers::SourceController;
+    use pulsectl::controllers::DeviceControl;
+
+    let mut handler = SourceController::create().ok()?;
+    let devices = handler.list_devices().ok()?;
+
+    // Get cpal device names for mapping
+    let host = cpal::default_host();
+    let cpal_devices: Vec<String> = host
+        .input_devices()
+        .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
+        .unwrap_or_default();
+
+    let result: Vec<DeviceInfo> = devices
+        .into_iter()
+        .filter_map(|dev| {
+            let description = dev.description.clone()?;
+            let pa_name = dev.name.clone()?;
+
+            // Try to find matching cpal device
+            let internal_name = cpal_devices
+                .iter()
+                .find(|cpal_name| {
+                    cpal_name.contains(&pa_name) || pa_name.contains(cpal_name.as_str())
+                })
+                .cloned()
+                .unwrap_or_else(|| pa_name.clone());
+
+            Some(DeviceInfo {
+                display_name: description,
+                internal_name,
+            })
+        })
+        .collect();
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
