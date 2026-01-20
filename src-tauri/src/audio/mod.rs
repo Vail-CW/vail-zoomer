@@ -523,9 +523,27 @@ fn create_output_stream(
     let host = cpal::default_host();
 
     let device = if let Some(name) = device_name {
-        host.output_devices()
+        let devices: Vec<_> = host.output_devices()
             .map_err(|e| e.to_string())?
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+            .collect();
+
+        // Debug: print available devices
+        eprintln!("[audio] Looking for output device: '{}'", name);
+        eprintln!("[audio] Available output devices:");
+        for d in &devices {
+            if let Ok(n) = d.name() {
+                eprintln!("[audio]   - '{}'", n);
+            }
+        }
+
+        // Try exact match first
+        devices.into_iter()
+            .find(|d| d.name().map(|n| {
+                // Exact match or case-insensitive substring match
+                n == name ||
+                n.to_lowercase().contains(&name.to_lowercase()) ||
+                name.to_lowercase().contains(&n.to_lowercase())
+            }).unwrap_or(false))
             .ok_or_else(|| format!("Output device '{}' not found", name))?
     } else {
         host.default_output_device()
