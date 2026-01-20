@@ -1006,15 +1006,15 @@ function App() {
   useEffect(() => {
     const initialize = async () => {
       // Detect OS for platform-specific UI hints
+      let detectedOS: OSType = "windows";
       try {
-        const os = platform();
+        const os = await platform();
         if (os === "macos") {
-          setCurrentOS("macos");
+          detectedOS = "macos";
         } else if (os === "linux") {
-          setCurrentOS("linux");
-        } else {
-          setCurrentOS("windows");
+          detectedOS = "linux";
         }
+        setCurrentOS(detectedOS);
       } catch {
         // Default to windows if detection fails
       }
@@ -1062,8 +1062,7 @@ function App() {
       }
 
       // Check for Linux virtual audio device (Linux only)
-      const os = await platform();
-      if (os === "linux" && !savedSettings.linux_audio_setup_completed) {
+      if (detectedOS === "linux" && !savedSettings.linux_audio_setup_completed) {
         try {
           const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
           setLinuxAudioStatus(status);
