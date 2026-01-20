@@ -29,6 +29,7 @@ pub enum AudioSystem {
 pub struct VirtualAudioStatus {
     pub exists: bool,
     pub audio_system: AudioSystem,
+    pub pactl_installed: bool,
 }
 
 /// Result of setup operation
@@ -68,25 +69,112 @@ const PULSEAUDIO_NULL_SINK: &str =
 const PULSEAUDIO_REMAP_SOURCE: &str =
     "load-module module-remap-source master=VailZoomer.monitor source_name=VailZoomerMic source_properties=device.description=\"Vail_Zoomer_Microphone\"";
 
+/// Check if pactl command is available
+#[cfg(target_os = "linux")]
+pub fn is_pactl_installed() -> bool {
+    Command::new("which")
+        .arg("pactl")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_pactl_installed() -> bool {
+    false
+}
+
+/// Install pulseaudio-utils package (provides pactl)
+#[cfg(target_os = "linux")]
+fn install_pactl() -> Result<(), String> {
+    eprintln!("[linux_audio] Attempting to install pulseaudio-utils...");
+
+    // Try pkexec for graphical sudo prompt
+    let result = Command::new("pkexec")
+        .args(["apt-get", "install", "-y", "pulseaudio-utils"])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                eprintln!("[linux_audio] Successfully installed pulseaudio-utils");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Check if user cancelled the auth dialog
+                if stderr.contains("dismissed") || stderr.contains("cancelled") {
+                    Err("Installation cancelled. Please install manually: sudo apt install pulseaudio-utils".to_string())
+                } else {
+                    Err(format!("Failed to install pulseaudio-utils: {}", stderr))
+                }
+            }
+        }
+        Err(e) => {
+            Err(format!("Failed to run installer: {}. Please install manually: sudo apt install pulseaudio-utils", e))
+        }
+    }
+}
+
 /// Detect whether the system uses PipeWire or PulseAudio
 #[cfg(target_os = "linux")]
 pub fn detect_audio_system() -> AudioSystem {
+    // First try pactl if available
     let output = Command::new("pactl").args(["info"]).output();
 
-    match output {
-        Ok(output) => {
+    if let Ok(output) = output {
+        if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
             if stdout.contains("pipewire") {
-                AudioSystem::PipeWire
+                return AudioSystem::PipeWire;
             } else if stdout.contains("pulseaudio") {
-                AudioSystem::PulseAudio
+                return AudioSystem::PulseAudio;
             } else {
                 // If pactl works but we can't identify the server, assume PulseAudio
-                AudioSystem::PulseAudio
+                return AudioSystem::PulseAudio;
             }
         }
-        Err(_) => AudioSystem::Unknown,
     }
+
+    // Fallback: check if PipeWire is running via systemctl
+    let pipewire_check = Command::new("systemctl")
+        .args(["--user", "is-active", "pipewire"])
+        .output();
+
+    if let Ok(output) = pipewire_check {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+            if stdout == "active" {
+                eprintln!("[linux_audio] Detected PipeWire via systemctl");
+                return AudioSystem::PipeWire;
+            }
+        }
+    }
+
+    // Fallback: check if PulseAudio is running via systemctl
+    let pulse_check = Command::new("systemctl")
+        .args(["--user", "is-active", "pulseaudio"])
+        .output();
+
+    if let Ok(output) = pulse_check {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+            if stdout == "active" {
+                eprintln!("[linux_audio] Detected PulseAudio via systemctl");
+                return AudioSystem::PulseAudio;
+            }
+        }
+    }
+
+    // Last fallback: check for pipewire process
+    let pgrep = Command::new("pgrep").args(["-x", "pipewire"]).output();
+    if let Ok(output) = pgrep {
+        if output.status.success() {
+            eprintln!("[linux_audio] Detected PipeWire via pgrep");
+            return AudioSystem::PipeWire;
+        }
+    }
+
+    AudioSystem::Unknown
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -97,7 +185,17 @@ pub fn detect_audio_system() -> AudioSystem {
 /// Check if the VailZoomerMic source exists
 #[cfg(target_os = "linux")]
 pub fn check_virtual_audio_device() -> Result<VirtualAudioStatus, String> {
+    let pactl_installed = is_pactl_installed();
     let audio_system = detect_audio_system();
+
+    // If pactl isn't installed, we can still detect the audio system but can't check for devices
+    if !pactl_installed {
+        return Ok(VirtualAudioStatus {
+            exists: false,
+            audio_system,
+            pactl_installed: false,
+        });
+    }
 
     // Check for the source (VailZoomerMic) which is what Zoom sees
     let output = Command::new("pactl")
@@ -111,6 +209,7 @@ pub fn check_virtual_audio_device() -> Result<VirtualAudioStatus, String> {
     Ok(VirtualAudioStatus {
         exists,
         audio_system,
+        pactl_installed: true,
     })
 }
 
@@ -119,6 +218,7 @@ pub fn check_virtual_audio_device() -> Result<VirtualAudioStatus, String> {
     Ok(VirtualAudioStatus {
         exists: true, // Return true on non-Linux so UI doesn't show prompt
         audio_system: AudioSystem::Unknown,
+        pactl_installed: true,
     })
 }
 
@@ -248,13 +348,25 @@ fn setup_pulseaudio() -> Result<SetupResult, String> {
 /// Main setup function that detects audio system and runs appropriate setup
 #[cfg(target_os = "linux")]
 pub fn setup_virtual_audio_device() -> Result<SetupResult, String> {
+    // First, ensure pactl is installed (needed for verification)
+    if !is_pactl_installed() {
+        eprintln!("[linux_audio] pactl not found, attempting to install...");
+        install_pactl()?;
+
+        // Verify it's now installed
+        if !is_pactl_installed() {
+            return Err("Failed to install pulseaudio-utils. Please install manually: sudo apt install pulseaudio-utils".to_string());
+        }
+    }
+
     let audio_system = detect_audio_system();
+    eprintln!("[linux_audio] Detected audio system: {:?}", audio_system);
 
     match audio_system {
         AudioSystem::PipeWire => setup_pipewire(),
         AudioSystem::PulseAudio => setup_pulseaudio(),
         AudioSystem::Unknown => Err(
-            "Could not detect audio system (PipeWire or PulseAudio). Is pactl installed?"
+            "Could not detect audio system. Please ensure PipeWire or PulseAudio is running."
                 .to_string(),
         ),
     }

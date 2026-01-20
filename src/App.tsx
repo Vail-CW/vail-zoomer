@@ -33,6 +33,7 @@ interface Settings {
 interface VirtualAudioStatus {
   exists: boolean;
   audio_system: "PipeWire" | "PulseAudio" | "Unknown";
+  pactl_installed: boolean;
 }
 
 interface SetupResult {
@@ -1536,9 +1537,14 @@ function App() {
                   <p className="text-xs text-gray-500">
                     {linuxAudioStatus?.exists
                       ? "Virtual audio device found"
-                      : "Create a virtual audio device for Zoom"}
+                      : linuxAudioStatus?.pactl_installed === false
+                        ? "Will install required packages and create virtual audio device"
+                        : "Create a virtual audio device for Zoom"}
                     {linuxAudioStatus?.audio_system && linuxAudioStatus.audio_system !== "Unknown" && (
                       <span className="ml-1">({linuxAudioStatus.audio_system})</span>
+                    )}
+                    {linuxAudioStatus?.pactl_installed === false && linuxAudioStatus?.audio_system === "Unknown" && (
+                      <span className="ml-1 text-yellow-500">(detecting...)</span>
                     )}
                   </p>
                 </div>
@@ -1562,6 +1568,11 @@ function App() {
                   )}
                 </button>
               </div>
+              {linuxAudioStatus?.pactl_installed === false && !linuxSetupResult && (
+                <p className="text-xs text-yellow-500 mt-1">
+                  Setup will install pulseaudio-utils package (requires admin password)
+                </p>
+              )}
               {linuxSetupResult && (
                 <div className={`mt-2 p-2 rounded text-sm ${linuxSetupResult.success ? "bg-green-900/30 text-green-300" : "bg-red-900/30 text-red-300"}`}>
                   {linuxSetupResult.message}
