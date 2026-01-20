@@ -9,6 +9,8 @@
     "core:event:allow-listen",
     "core:event:allow-emit",
     "shell:allow-open",
-    "os:default"
+    "os:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

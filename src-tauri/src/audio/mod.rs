@@ -536,15 +536,27 @@ fn create_output_stream(
             }
         }
 
-        // Try exact match first
+        // On Linux, if looking for VailZoomer (PipeWire virtual device),
+        // use the 'pipewire' ALSA device which bridges to PipeWire
+        #[cfg(target_os = "linux")]
+        let search_name = if name.to_lowercase().contains("vailzoomer") || name.to_lowercase().contains("vail zoomer") {
+            eprintln!("[audio] Detected VailZoomer request, using 'pipewire' ALSA bridge device");
+            "pipewire"
+        } else {
+            name
+        };
+        #[cfg(not(target_os = "linux"))]
+        let search_name = name;
+
+        // Try exact match first, then substring match
         devices.into_iter()
             .find(|d| d.name().map(|n| {
                 // Exact match or case-insensitive substring match
-                n == name ||
-                n.to_lowercase().contains(&name.to_lowercase()) ||
-                name.to_lowercase().contains(&n.to_lowercase())
+                n == search_name ||
+                n.to_lowercase().contains(&search_name.to_lowercase()) ||
+                search_name.to_lowercase().contains(&n.to_lowercase())
             }).unwrap_or(false))
-            .ok_or_else(|| format!("Output device '{}' not found", name))?
+            .ok_or_else(|| format!("Output device '{}' not found", search_name))?
     } else {
         host.default_output_device()
             .ok_or_else(|| "No default output device".to_string())?

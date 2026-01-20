@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
+import { check, Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 // Device info from backend (friendly name + internal name for selection)
 interface DeviceInfo {
@@ -943,6 +945,60 @@ function LinuxAudioSetupBanner({
   );
 }
 
+// Update Available Banner Component
+function UpdateBanner({
+  version,
+  onInstall,
+  onDismiss,
+  isInstalling,
+}: {
+  version: string;
+  onInstall: () => void;
+  onDismiss: () => void;
+  isInstalling: boolean;
+}) {
+  return (
+    <div className="p-3 bg-green-900/50 border border-green-700 rounded-lg mb-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          <span className="text-green-300 font-medium">
+            Update Available: v{version}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onDismiss}
+            className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded"
+            disabled={isInstalling}
+          >
+            Later
+          </button>
+          <button
+            onClick={onInstall}
+            disabled={isInstalling}
+            className="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-500 disabled:bg-gray-600 rounded flex items-center gap-2"
+          >
+            {isInstalling ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Installing...
+              </>
+            ) : (
+              "Install & Restart"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [cwText, setCwText] = useState("");
   const [estimatedWpm, setEstimatedWpm] = useState(0);
@@ -968,6 +1024,10 @@ function App() {
   const [linuxAudioStatus, setLinuxAudioStatus] = useState<VirtualAudioStatus | null>(null);
   const [linuxSetupInProgress, setLinuxSetupInProgress] = useState(false);
   const [linuxSetupResult, setLinuxSetupResult] = useState<SetupResult | null>(null);
+
+  // Update state
+  const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
 
   // Settings state
   const [settings, setSettings] = useState<Settings>({
@@ -1078,6 +1138,17 @@ function App() {
         } catch (err) {
           console.error("Failed to check Linux virtual audio:", err);
         }
+      }
+
+      // Check for updates (all platforms)
+      try {
+        const update = await check();
+        if (update) {
+          console.log(`Update available: ${update.version}`);
+          setUpdateAvailable(update);
+        }
+      } catch (err) {
+        console.error("Failed to check for updates:", err);
       }
     };
 
@@ -1206,6 +1277,27 @@ function App() {
     setLinuxSetupResult(null);
   };
 
+  // Update handlers
+  const handleInstallUpdate = async () => {
+    if (!updateAvailable) return;
+
+    setIsInstallingUpdate(true);
+    try {
+      // Download and install the update
+      await updateAvailable.downloadAndInstall();
+      // On macOS/Linux, relaunch the app
+      // On Windows with NSIS, the app exits automatically
+      await relaunch();
+    } catch (err) {
+      console.error("Failed to install update:", err);
+      setIsInstallingUpdate(false);
+    }
+  };
+
+  const handleDismissUpdate = () => {
+    setUpdateAvailable(null);
+  };
+
   // Level meter component
   const LevelMeter = ({ level, label }: { level: number; label: string }) => (
     <div>
@@ -1241,6 +1333,16 @@ function App() {
           Help
         </button>
       </header>
+
+      {/* Update Available Banner */}
+      {updateAvailable && (
+        <UpdateBanner
+          version={updateAvailable.version}
+          onInstall={handleInstallUpdate}
+          onDismiss={handleDismissUpdate}
+          isInstalling={isInstallingUpdate}
+        />
+      )}
 
       {/* Linux Virtual Audio Setup Banner */}
       {currentOS === "linux" && showLinuxAudioBanner && linuxAudioStatus && (
