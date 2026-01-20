@@ -108,32 +108,17 @@ jobs:
         with:
           name: binaries-${{ matrix.platform }}-${{ matrix.target || 'default' }}
           path: |
+            src-tauri/target/${{ matrix.target || 'release' }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target || 'release' }}/release/bundle/**/*.app
+            src-tauri/target/${{ matrix.target || 'release' }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target || 'release' }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target || 'release' }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target || 'release' }}/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.app
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: warn
 
-  # Create universal macOS binary
-  universal-macos:
-    needs: build
-    runs-on: macos-latest
-    steps:
-      - name: Download aarch64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-macos-latest-aarch64-apple-darwin
-          path: aarch64
-
-      - name: Download x86_64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-macos-latest-x86_64-apple-darwin
-          path: x86_64
-
-      - name: Create universal binary
-        run: |
-          # This step would create a universal binary if needed
-          # For now, both architectures are provided separately
-          echo "Both arm64 and x86_64 binaries available for download"
