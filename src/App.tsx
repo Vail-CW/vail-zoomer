@@ -995,7 +995,7 @@ function App() {
       case "macos":
         return { output: "BlackHole 2ch", input: "BlackHole 2ch" };
       case "linux":
-        return { output: "VailZoomer Sink", input: "VailZoomer Sink Monitor" };
+        return { output: "Vail Zoomer", input: "Vail Zoomer Mic" };
       default:
         return { output: "CABLE Input", input: "CABLE Output" };
     }
@@ -1484,6 +1484,10 @@ function App() {
             </div>
           </div>
 
+          <p className="text-xs text-gray-500 mt-2 text-right">
+            Select "{virtualDeviceNames.output}" as output here, then "{virtualDeviceNames.input}" as microphone in Zoom.
+          </p>
+
           {/* Local Monitoring Section */}
           {(settings.sidetone_route === "LocalOnly" || settings.sidetone_route === "Both") && (
             <div className="mt-3 pt-3 border-t border-gray-700">
@@ -1523,10 +1527,6 @@ function App() {
               </div>
             </div>
           )}
-
-          <p className="text-xs text-gray-500 mt-2 text-right">
-            Select "{virtualDeviceNames.output}" as output here, then "{virtualDeviceNames.input}" as microphone in Zoom.
-          </p>
 
           {/* Linux Virtual Audio Setup - Always available on Linux */}
           {currentOS === "linux" && (
