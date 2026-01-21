@@ -115,6 +115,47 @@ fn install_pactl() -> Result<(), String> {
     }
 }
 
+/// Check if pipewire-alsa is installed (needed for ALSA apps to see PipeWire devices)
+#[cfg(target_os = "linux")]
+fn is_pipewire_alsa_installed() -> bool {
+    Command::new("dpkg")
+        .args(["-s", "pipewire-alsa"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Install pipewire-alsa package (bridges PipeWire devices to ALSA)
+#[cfg(target_os = "linux")]
+fn install_pipewire_alsa() -> Result<(), String> {
+    eprintln!("[linux_audio] Attempting to install pipewire-alsa...");
+
+    // Try pkexec for graphical sudo prompt
+    let result = Command::new("pkexec")
+        .args(["apt-get", "install", "-y", "pipewire-alsa"])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                eprintln!("[linux_audio] Successfully installed pipewire-alsa");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Check if user cancelled the auth dialog
+                if stderr.contains("dismissed") || stderr.contains("cancelled") {
+                    Err("Installation cancelled. Please install manually: sudo apt install pipewire-alsa".to_string())
+                } else {
+                    Err(format!("Failed to install pipewire-alsa: {}", stderr))
+                }
+            }
+        }
+        Err(e) => {
+            Err(format!("Failed to run installer: {}. Please install manually: sudo apt install pipewire-alsa", e))
+        }
+    }
+}
+
 /// Detect whether the system uses PipeWire or PulseAudio
 #[cfg(target_os = "linux")]
 pub fn detect_audio_system() -> AudioSystem {
@@ -243,6 +284,12 @@ fn get_pulseaudio_config_path() -> PathBuf {
 /// Setup virtual audio device for PipeWire
 #[cfg(target_os = "linux")]
 fn setup_pipewire() -> Result<SetupResult, String> {
+    // Ensure pipewire-alsa is installed (required for ALSA apps like cpal to see PipeWire devices)
+    if !is_pipewire_alsa_installed() {
+        eprintln!("[linux_audio] pipewire-alsa not installed, installing...");
+        install_pipewire_alsa()?;
+    }
+
     let config_dir = get_pipewire_config_dir();
     let config_file = config_dir.join("vail-zoomer.conf");
 
@@ -254,16 +301,26 @@ fn setup_pipewire() -> Result<SetupResult, String> {
     fs::write(&config_file, PIPEWIRE_CONFIG)
         .map_err(|e| format!("Failed to write config file {:?}: {}", config_file, e))?;
 
-    // Restart PipeWire services
+    // Restart PipeWire services (include pipewire-alsa to ensure ALSA bridge is active)
     let restart_result = Command::new("systemctl")
-        .args(["--user", "restart", "pipewire", "pipewire-pulse"])
+        .args(["--user", "restart", "pipewire", "pipewire-pulse", "pipewire-alsa"])
         .output();
 
     match restart_result {
         Ok(output) => {
             if !output.status.success() {
+                // pipewire-alsa might not be a separate service on all systems, try without it
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("Failed to restart PipeWire: {}", stderr));
+                eprintln!("[linux_audio] Restart with pipewire-alsa failed ({}), trying without...", stderr);
+                let retry_result = Command::new("systemctl")
+                    .args(["--user", "restart", "pipewire", "pipewire-pulse"])
+                    .output();
+                if let Ok(retry_output) = retry_result {
+                    if !retry_output.status.success() {
+                        let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+                        return Err(format!("Failed to restart PipeWire: {}", retry_stderr));
+                    }
+                }
             }
         }
         Err(e) => {
