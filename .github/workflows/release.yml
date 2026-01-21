@@ -124,6 +124,14 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Tauri CLI for signing
+        run: npm install -g @tauri-apps/cli@latest
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -132,136 +140,128 @@ jobs:
       - name: List artifacts for debugging
         run: find artifacts -type f | head -100
 
-      - name: Create OS-specific zip files
+      - name: Create OS-specific zip files and sign them
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p release-zips
+          mkdir -p release-assets
 
           # Windows zip
           if [ -d "artifacts/windows-x64" ]; then
-            cd artifacts/windows-x64
-            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.sig" \) -exec cp --parents {} ../../release-zips/windows/ \;
-            cd ../../release-zips
-            if [ -d "windows" ]; then
-              cd windows
-              # Flatten the directory structure
-              find . -type f -exec mv {} . \; 2>/dev/null || true
-              find . -type d -empty -delete 2>/dev/null || true
-              zip -j "../Vail.Zoomer-${VERSION}-windows-x64.zip" *
+            mkdir -p temp-windows
+            find artifacts/windows-x64 -type f \( -name "*.exe" -o -name "*.msi" \) -exec cp {} temp-windows/ \;
+            if [ "$(ls -A temp-windows 2>/dev/null)" ]; then
+              cd temp-windows
+              zip -j "../release-assets/Vail.Zoomer-${VERSION}-windows-x64.zip" *
               cd ..
-              rm -rf windows
+              # Sign the zip
+              npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "release-assets/Vail.Zoomer-${VERSION}-windows-x64.zip"
             fi
-            cd ..
+            rm -rf temp-windows
           fi
 
           # macOS x64 zip
           if [ -d "artifacts/macos-x64" ]; then
-            cd artifacts/macos-x64
-            find . -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.sig" \) -exec cp --parents {} ../../release-zips/macos-x64/ \;
-            cd ../../release-zips
-            if [ -d "macos-x64" ]; then
-              cd macos-x64
-              find . -type f -exec mv {} . \; 2>/dev/null || true
-              find . -type d -empty -delete 2>/dev/null || true
-              zip -j "../Vail.Zoomer-${VERSION}-macos-x64.zip" *
+            mkdir -p temp-macos-x64
+            find artifacts/macos-x64 -type f \( -name "*.dmg" -o -name "*.app.tar.gz" \) ! -name "*.sig" -exec cp {} temp-macos-x64/ \;
+            if [ "$(ls -A temp-macos-x64 2>/dev/null)" ]; then
+              cd temp-macos-x64
+              zip -j "../release-assets/Vail.Zoomer-${VERSION}-macos-x64.zip" *
               cd ..
-              rm -rf macos-x64
+              # Sign the zip
+              npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "release-assets/Vail.Zoomer-${VERSION}-macos-x64.zip"
             fi
-            cd ..
+            rm -rf temp-macos-x64
           fi
 
           # macOS arm64 zip
           if [ -d "artifacts/macos-arm64" ]; then
-            cd artifacts/macos-arm64
-            find . -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.sig" \) -exec cp --parents {} ../../release-zips/macos-arm64/ \;
-            cd ../../release-zips
-            if [ -d "macos-arm64" ]; then
-              cd macos-arm64
-              find . -type f -exec mv {} . \; 2>/dev/null || true
-              find . -type d -empty -delete 2>/dev/null || true
-              zip -j "../Vail.Zoomer-${VERSION}-macos-arm64.zip" *
+            mkdir -p temp-macos-arm64
+            find artifacts/macos-arm64 -type f \( -name "*.dmg" -o -name "*.app.tar.gz" \) ! -name "*.sig" -exec cp {} temp-macos-arm64/ \;
+            if [ "$(ls -A temp-macos-arm64 2>/dev/null)" ]; then
+              cd temp-macos-arm64
+              zip -j "../release-assets/Vail.Zoomer-${VERSION}-macos-arm64.zip" *
               cd ..
-              rm -rf macos-arm64
+              # Sign the zip
+              npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "release-assets/Vail.Zoomer-${VERSION}-macos-arm64.zip"
             fi
-            cd ..
+            rm -rf temp-macos-arm64
           fi
 
           # Linux zip
           if [ -d "artifacts/linux-x64" ]; then
-            cd artifacts/linux-x64
-            find . -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" -o -name "*.sig" \) -exec cp --parents {} ../../release-zips/linux/ \;
-            cd ../../release-zips
-            if [ -d "linux" ]; then
-              cd linux
-              find . -type f -exec mv {} . \; 2>/dev/null || true
-              find . -type d -empty -delete 2>/dev/null || true
-              zip -j "../Vail.Zoomer-${VERSION}-linux-x64.zip" *
+            mkdir -p temp-linux
+            find artifacts/linux-x64 -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) ! -name "*.sig" -exec cp {} temp-linux/ \;
+            if [ "$(ls -A temp-linux 2>/dev/null)" ]; then
+              cd temp-linux
+              zip -j "../release-assets/Vail.Zoomer-${VERSION}-linux-x64.zip" *
               cd ..
-              rm -rf linux
+              # Sign the zip
+              npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "release-assets/Vail.Zoomer-${VERSION}-linux-x64.zip"
             fi
-            cd ..
+            rm -rf temp-linux
           fi
 
-          echo "Created zip files:"
-          ls -la release-zips/
+          echo "Created and signed zip files:"
+          ls -la release-assets/
 
       - name: Generate latest.json for updater
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
 
-          # Find signature files and read their contents
+          # Read signatures from the .sig files we just created
           WINDOWS_SIG=""
           MACOS_X64_SIG=""
           MACOS_ARM64_SIG=""
           LINUX_SIG=""
 
-          # Windows signature (from .msi.sig or .exe.sig)
-          if [ -f "artifacts/windows-x64/src-tauri/target/release/bundle/msi/"*".msi.sig" ]; then
-            WINDOWS_SIG=$(cat artifacts/windows-x64/src-tauri/target/release/bundle/msi/*.msi.sig 2>/dev/null | head -1)
-          elif [ -f "artifacts/windows-x64/src-tauri/target/release/bundle/nsis/"*".exe.sig" ]; then
-            WINDOWS_SIG=$(cat artifacts/windows-x64/src-tauri/target/release/bundle/nsis/*.exe.sig 2>/dev/null | head -1)
+          if [ -f "release-assets/Vail.Zoomer-${VERSION}-windows-x64.zip.sig" ]; then
+            WINDOWS_SIG=$(cat "release-assets/Vail.Zoomer-${VERSION}-windows-x64.zip.sig")
           fi
 
-          # macOS x64 signature
-          MACOS_X64_SIG=$(find artifacts/macos-x64 -name "*.app.tar.gz.sig" -exec cat {} \; 2>/dev/null | head -1)
+          if [ -f "release-assets/Vail.Zoomer-${VERSION}-macos-x64.zip.sig" ]; then
+            MACOS_X64_SIG=$(cat "release-assets/Vail.Zoomer-${VERSION}-macos-x64.zip.sig")
+          fi
 
-          # macOS arm64 signature
-          MACOS_ARM64_SIG=$(find artifacts/macos-arm64 -name "*.app.tar.gz.sig" -exec cat {} \; 2>/dev/null | head -1)
+          if [ -f "release-assets/Vail.Zoomer-${VERSION}-macos-arm64.zip.sig" ]; then
+            MACOS_ARM64_SIG=$(cat "release-assets/Vail.Zoomer-${VERSION}-macos-arm64.zip.sig")
+          fi
 
-          # Linux signature
-          LINUX_SIG=$(find artifacts/linux-x64 -name "*.AppImage.sig" -exec cat {} \; 2>/dev/null | head -1)
+          if [ -f "release-assets/Vail.Zoomer-${VERSION}-linux-x64.zip.sig" ]; then
+            LINUX_SIG=$(cat "release-assets/Vail.Zoomer-${VERSION}-linux-x64.zip.sig")
+          fi
 
           # Get pub date
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          # Create latest.json
-          cat > release-zips/latest.json << EOF
-          {
-            "version": "${VERSION#v}",
-            "pub_date": "${PUB_DATE}",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "${WINDOWS_SIG}",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-windows-x64.zip"
-              },
-              "darwin-x86_64": {
-                "signature": "${MACOS_X64_SIG}",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-macos-x64.zip"
-              },
-              "darwin-aarch64": {
-                "signature": "${MACOS_ARM64_SIG}",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-macos-arm64.zip"
-              },
-              "linux-x86_64": {
-                "signature": "${LINUX_SIG}",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-linux-x64.zip"
+          # Create latest.json using jq to avoid YAML parsing issues
+          jq -n \
+            --arg version "${VERSION#v}" \
+            --arg pub_date "$PUB_DATE" \
+            --arg win_sig "$WINDOWS_SIG" \
+            --arg win_url "https://github.com/${REPO}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-windows-x64.zip" \
+            --arg mac_x64_sig "$MACOS_X64_SIG" \
+            --arg mac_x64_url "https://github.com/${REPO}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-macos-x64.zip" \
+            --arg mac_arm_sig "$MACOS_ARM64_SIG" \
+            --arg mac_arm_url "https://github.com/${REPO}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-macos-arm64.zip" \
+            --arg linux_sig "$LINUX_SIG" \
+            --arg linux_url "https://github.com/${REPO}/releases/download/${VERSION}/Vail.Zoomer-${VERSION}-linux-x64.zip" \
+            '{
+              version: $version,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": { signature: $win_sig, url: $win_url },
+                "darwin-x86_64": { signature: $mac_x64_sig, url: $mac_x64_url },
+                "darwin-aarch64": { signature: $mac_arm_sig, url: $mac_arm_url },
+                "linux-x86_64": { signature: $linux_sig, url: $linux_url }
               }
-            }
-          }
-          EOF
+            }' > release-assets/latest.json
 
           echo "Generated latest.json:"
-          cat release-zips/latest.json
+          cat release-assets/latest.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -290,7 +290,7 @@ jobs:
 
             **First time setup?** See the [README](https://github.com/${{ github.repository }}#readme) for virtual audio device installation instructions.
           files: |
-            release-zips/*.zip
-            release-zips/latest.json
+            release-assets/*.zip
+            release-assets/latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

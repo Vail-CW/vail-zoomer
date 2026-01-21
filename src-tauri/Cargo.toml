@@ -1,6 +1,6 @@
 [package]
 name = "vail-zoomer"
-version = "0.1.7"
+version = "0.1.8"
 description = "CW sidetone + microphone merger for video conferencing"
 authors = ["Brett"]
 edition = "2021"
