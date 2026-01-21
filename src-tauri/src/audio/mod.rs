@@ -537,26 +537,38 @@ fn create_output_stream(
         }
 
         // On Linux, if looking for VailZoomer (PipeWire virtual device),
-        // use the 'pipewire' ALSA device which bridges to PipeWire
+        // try multiple possible device names since it varies by system configuration
         #[cfg(target_os = "linux")]
-        let search_name = if name.to_lowercase().contains("vailzoomer") || name.to_lowercase().contains("vail zoomer") {
-            eprintln!("[audio] Detected VailZoomer request, using 'pipewire' ALSA bridge device");
-            "pipewire"
+        let search_names: Vec<&str> = if name.to_lowercase().contains("vailzoomer") || name.to_lowercase().contains("vail zoomer") {
+            eprintln!("[audio] Detected VailZoomer request, will try multiple device names");
+            // Try the actual device name first, then fallback to 'pipewire' ALSA bridge
+            vec![name, "VailZoomer", "vailzoomer", "Vail Zoomer", "pipewire"]
         } else {
-            name
+            vec![name]
         };
         #[cfg(not(target_os = "linux"))]
-        let search_name = name;
+        let search_names: Vec<&str> = vec![name];
 
-        // Try exact match first, then substring match
-        devices.into_iter()
-            .find(|d| d.name().map(|n| {
-                // Exact match or case-insensitive substring match
-                n == search_name ||
-                n.to_lowercase().contains(&search_name.to_lowercase()) ||
-                search_name.to_lowercase().contains(&n.to_lowercase())
-            }).unwrap_or(false))
-            .ok_or_else(|| format!("Output device '{}' not found", search_name))?
+        // Try each search name in order, using exact match first, then substring match
+        let mut found_device = None;
+        for search_name in &search_names {
+            eprintln!("[audio] Trying to find device matching: '{}'", search_name);
+            found_device = devices.iter()
+                .find(|d| d.name().map(|n| {
+                    // Exact match or case-insensitive substring match
+                    n == *search_name ||
+                    n.to_lowercase().contains(&search_name.to_lowercase()) ||
+                    search_name.to_lowercase().contains(&n.to_lowercase())
+                }).unwrap_or(false));
+
+            if found_device.is_some() {
+                eprintln!("[audio] Found device with search name: '{}'", search_name);
+                break;
+            }
+        }
+
+        found_device.cloned()
+            .ok_or_else(|| format!("Output device '{}' not found (tried: {:?})", name, search_names))?
     } else {
         host.default_output_device()
             .ok_or_else(|| "No default output device".to_string())?
