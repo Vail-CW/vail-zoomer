@@ -1,6 +1,6 @@
 {
   "name": "vail-zoomer",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Merge CW sidetone with microphone for video conferencing",
   "type": "module",
   "scripts": {
