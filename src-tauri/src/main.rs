@@ -191,6 +191,15 @@ fn stop_audio(state: tauri::State<AppState>) {
     }
 }
 
+/// Set mic volume without persisting to settings file
+/// Used for temporary muting during wizard
+#[tauri::command]
+fn set_mic_volume(state: tauri::State<AppState>, volume: f32) {
+    if let Some(ref engine) = *state.audio_engine.lock() {
+        engine.set_mic_volume(volume);
+    }
+}
+
 #[tauri::command]
 fn key_down(state: tauri::State<AppState>, is_dit: bool) {
     // Trigger sidetone
@@ -375,6 +384,7 @@ fn main() {
             start_audio,
             start_audio_with_devices,
             stop_audio,
+            set_mic_volume,
             key_down,
             key_up,
             check_linux_virtual_audio,

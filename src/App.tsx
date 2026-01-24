@@ -115,6 +115,9 @@ function App() {
   // Ref to track test tone timeout (for cancellation)
   const testToneTimeoutRef = useRef<number | null>(null);
 
+  // Ref to track the user's saved mic volume (for restoring after wizard mute)
+  const savedMicVolumeRef = useRef<number>(1.0);
+
   // Check if wizard was completed for this version
   useEffect(() => {
     const completed = localStorage.getItem(WIZARD_COMPLETE_KEY) === "true";
@@ -182,6 +185,15 @@ function App() {
           inputDevice: savedSettings.input_device,
         });
         setAudioStarted(true);
+
+        // Mute mic during wizard to prevent feedback until user is ready
+        const wizardCompleted = localStorage.getItem(WIZARD_COMPLETE_KEY) === "true";
+        if (!wizardCompleted) {
+          // Save the user's mic volume preference so we can restore it later
+          savedMicVolumeRef.current = savedSettings.mic_volume;
+          // Mute at backend only (don't persist to settings file)
+          await invoke("set_mic_volume", { volume: 0.0 });
+        }
       } catch (err) {
         console.error("Failed to start audio:", err);
       }
@@ -464,6 +476,7 @@ function App() {
             selectedLocalDevice={selectedLocalDevice}
             sidetoneRoute={settings.sidetone_route}
             micLevel={micLevel}
+            micVolume={settings.mic_volume}
             currentOS={currentOS}
             onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
             onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}
@@ -472,6 +485,7 @@ function App() {
               updateSettings({ local_output_device: device });
             }}
             onSidetoneRouteChange={(route) => updateSettings({ sidetone_route: route })}
+            onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
             onTestTone={() => testTone(true)}
             onBack={() => setWizardStep(2)}
             onNext={() => setWizardStep(4)}

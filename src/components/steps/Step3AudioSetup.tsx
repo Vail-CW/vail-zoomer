@@ -2,7 +2,6 @@ import { WizardLayout } from "../wizard/WizardLayout";
 import { BigSelect } from "../shared/BigSelect";
 import { BigButton } from "../shared/BigButton";
 import { InfoBox } from "../shared/InfoBox";
-import { CollapsibleSection } from "../shared/CollapsibleSection";
 
 interface DeviceInfo {
   display_name: string;
@@ -17,11 +16,13 @@ interface Step3AudioSetupProps {
   selectedLocalDevice: string | null;
   sidetoneRoute: string;
   micLevel: number;
+  micVolume: number;
   currentOS: "windows" | "macos" | "linux";
   onInputDeviceChange: (device: string | null) => void;
   onOutputDeviceChange: (device: string | null) => void;
   onLocalDeviceChange: (device: string | null) => void;
   onSidetoneRouteChange: (route: string) => void;
+  onMicVolumeChange: (vol: number) => void;
   onTestTone: () => void;
   onBack: () => void;
   onNext: () => void;
@@ -35,11 +36,13 @@ export function Step3AudioSetup({
   selectedLocalDevice,
   sidetoneRoute,
   micLevel,
+  micVolume,
   currentOS,
   onInputDeviceChange,
   onOutputDeviceChange,
   onLocalDeviceChange,
   onSidetoneRouteChange,
+  onMicVolumeChange,
   onTestTone,
   onBack,
   onNext,
@@ -74,8 +77,8 @@ export function Step3AudioSetup({
           </p>
         </InfoBox>
 
-        {/* Microphone selection with level meter */}
-        <div className="space-y-1">
+        {/* Microphone selection with level meter and volume control */}
+        <div className="space-y-2">
           <label className="block text-sm text-gray-300">Your microphone:</label>
           <BigSelect
             value={selectedInputDevice || ""}
@@ -86,7 +89,28 @@ export function Step3AudioSetup({
             }))}
             placeholder="System Default"
           />
-          <div className="h-4 bg-gray-800 rounded-full overflow-hidden">
+
+          {/* Mic volume slider with mute indicator */}
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-400 w-20">
+              {micVolume === 0 ? (
+                <span className="text-amber-400 font-medium">Muted</span>
+              ) : (
+                `${Math.round(micVolume * 100)}%`
+              )}
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="150"
+              value={Math.round(micVolume * 100)}
+              onChange={(e) => onMicVolumeChange(parseInt(e.target.value) / 100)}
+              className="flex-1"
+            />
+          </div>
+
+          {/* Level meter */}
+          <div className="h-3 bg-gray-800 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-75 ${
                 micLevel > 0.8 ? "bg-red-500" : micLevel > 0.5 ? "bg-yellow-500" : "bg-green-500"
@@ -94,6 +118,12 @@ export function Step3AudioSetup({
               style={{ width: `${Math.min(micLevel * 100, 100)}%` }}
             />
           </div>
+
+          {micVolume === 0 && (
+            <p className="text-xs text-amber-400">
+              Drag the slider to unmute and adjust your microphone volume
+            </p>
+          )}
         </div>
 
         {/* Output device selection */}
@@ -180,15 +210,6 @@ export function Step3AudioSetup({
           )}
         </div>
 
-        {/* Volume controls - collapsed */}
-        <CollapsibleSection title="Adjust volumes" defaultOpen={false}>
-          <div className="space-y-3 pt-2">
-            <div>
-              <label className="text-sm text-gray-300">Mic volume</label>
-              <input type="range" min="0" max="150" defaultValue="100" className="w-full" />
-            </div>
-          </div>
-        </CollapsibleSection>
       </div>
     </WizardLayout>
   );
