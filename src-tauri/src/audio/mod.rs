@@ -22,6 +22,9 @@ pub struct DeviceInfo {
 /// Ring buffer size for mic audio (holds ~100ms at 48kHz)
 const RING_BUFFER_SIZE: usize = 4800;
 
+/// Mic ducking hold time after key up (~250ms at 48kHz)
+const MIC_DUCKING_HOLD_SAMPLES: u32 = 12000;
+
 /// Sidetone routing mode
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SidetoneRoute {
@@ -59,6 +62,8 @@ pub struct AudioEngineHandle {
     mic_level: Arc<AtomicU32>,
     output_level: Arc<AtomicU32>,
     sidetone_route: Arc<AtomicU32>,  // Store as u32 for atomic ops
+    mic_ducking_enabled: Arc<AtomicBool>,  // Whether to mute mic while sending
+    mic_ducking_hold: Arc<AtomicU32>,      // Samples remaining for ducking hold after key up
 }
 
 impl AudioEngineHandle {
@@ -73,6 +78,8 @@ impl AudioEngineHandle {
         let mic_level_atomic = Arc::new(AtomicU32::new(0.0_f32.to_bits())); // Current mic level
         let output_level_atomic = Arc::new(AtomicU32::new(0.0_f32.to_bits())); // Current output level
         let sidetone_route_atomic = Arc::new(AtomicU32::new(0)); // 0 = OutputOnly
+        let mic_ducking_enabled = Arc::new(AtomicBool::new(false));
+        let mic_ducking_hold = Arc::new(AtomicU32::new(0));
 
         let is_key_down_clone = Arc::clone(&is_key_down);
         let frequency_clone = Arc::clone(&frequency_atomic);
@@ -82,6 +89,8 @@ impl AudioEngineHandle {
         let mic_level_clone = Arc::clone(&mic_level_atomic);
         let output_level_clone = Arc::clone(&output_level_atomic);
         let sidetone_route_clone = Arc::clone(&sidetone_route_atomic);
+        let mic_ducking_enabled_clone = Arc::clone(&mic_ducking_enabled);
+        let mic_ducking_hold_clone = Arc::clone(&mic_ducking_hold);
 
         // Spawn the audio thread
         thread::spawn(move || {
@@ -95,6 +104,8 @@ impl AudioEngineHandle {
                 mic_level_clone,
                 output_level_clone,
                 sidetone_route_clone,
+                mic_ducking_enabled_clone,
+                mic_ducking_hold_clone,
             );
         });
 
@@ -108,6 +119,8 @@ impl AudioEngineHandle {
             mic_level: mic_level_atomic,
             output_level: output_level_atomic,
             sidetone_route: sidetone_route_atomic,
+            mic_ducking_enabled,
+            mic_ducking_hold,
         })
     }
 
@@ -211,11 +224,20 @@ impl AudioEngineHandle {
     /// Signal key down (start sidetone)
     pub fn key_down(&self) {
         self.is_key_down.store(true, Ordering::Relaxed);
+        // Reset ducking hold to max while key is down
+        self.mic_ducking_hold.store(MIC_DUCKING_HOLD_SAMPLES, Ordering::Relaxed);
     }
 
     /// Signal key up (stop sidetone)
     pub fn key_up(&self) {
         self.is_key_down.store(false, Ordering::Relaxed);
+        // Start the ducking hold countdown (will be decremented in audio callback)
+        self.mic_ducking_hold.store(MIC_DUCKING_HOLD_SAMPLES, Ordering::Relaxed);
+    }
+
+    /// Enable or disable mic ducking while sending
+    pub fn set_mic_ducking(&self, enabled: bool) {
+        self.mic_ducking_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Update sidetone frequency
@@ -285,6 +307,8 @@ fn audio_thread(
     mic_level: Arc<AtomicU32>,
     output_level: Arc<AtomicU32>,
     sidetone_route: Arc<AtomicU32>,
+    mic_ducking_enabled: Arc<AtomicBool>,
+    mic_ducking_hold: Arc<AtomicU32>,
 ) {
     let mut output_stream: Option<Stream> = None;
     let mut local_stream: Option<Stream> = None;
@@ -360,6 +384,8 @@ fn audio_thread(
                     Arc::clone(&mic_volume),
                     Arc::clone(&output_level),
                     include_sidetone_in_output,
+                    Arc::clone(&mic_ducking_enabled),
+                    Arc::clone(&mic_ducking_hold),
                 ) {
                     Ok(new_stream) => {
                         if let Err(e) = new_stream.play() {
@@ -519,6 +545,8 @@ fn create_output_stream(
     mic_volume: Arc<AtomicU32>,
     output_level: Arc<AtomicU32>,
     include_sidetone: bool,
+    mic_ducking_enabled: Arc<AtomicBool>,
+    mic_ducking_hold: Arc<AtomicU32>,
 ) -> Result<Stream, String> {
     let host = cpal::default_host();
 
@@ -585,9 +613,9 @@ fn create_output_stream(
     sidetone.lock().set_sample_rate(sample_rate);
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_output_stream::<f32>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels),
-        cpal::SampleFormat::I16 => build_output_stream::<i16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels),
-        cpal::SampleFormat::U16 => build_output_stream::<u16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels),
+        cpal::SampleFormat::F32 => build_output_stream::<f32>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold),
+        cpal::SampleFormat::I16 => build_output_stream::<i16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold),
+        cpal::SampleFormat::U16 => build_output_stream::<u16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold),
         _ => return Err("Unsupported output sample format".to_string()),
     }?;
 
@@ -604,6 +632,8 @@ fn build_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     output_level: Arc<AtomicU32>,
     include_sidetone: bool,
     channels: usize,
+    mic_ducking_enabled: Arc<AtomicBool>,
+    mic_ducking_hold: Arc<AtomicU32>,
 ) -> Result<Stream, String> {
     let stream = device
         .build_output_stream(
@@ -611,11 +641,17 @@ fn build_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 let key_down = is_key_down.load(Ordering::Relaxed);
                 let mic_vol = f32::from_bits(mic_volume.load(Ordering::Relaxed));
+                let ducking_enabled = mic_ducking_enabled.load(Ordering::Relaxed);
                 let mut sidetone = sidetone.lock();
                 let mut consumer = consumer.lock();
                 let mut peak: f32 = 0.0;
 
+                // Track samples processed for ducking hold countdown
+                let mut samples_in_frame = 0u32;
+
                 for frame in data.chunks_mut(channels) {
+                    samples_in_frame += 1;
+
                     // Get sidetone sample (only if routing includes it)
                     let tone_sample = if include_sidetone {
                         sidetone.next_sample(key_down)
@@ -626,7 +662,12 @@ fn build_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     };
 
                     // Get mic sample from ring buffer (or silence if empty)
-                    let mic_sample = consumer.try_pop().unwrap_or(0.0) * mic_vol;
+                    let raw_mic = consumer.try_pop().unwrap_or(0.0);
+
+                    // Apply mic ducking: mute mic while key is down or during hold period
+                    let ducking_hold = mic_ducking_hold.load(Ordering::Relaxed);
+                    let should_duck = ducking_enabled && (key_down || ducking_hold > 0);
+                    let mic_sample = if should_duck { 0.0 } else { raw_mic * mic_vol };
 
                     // Mix: add sidetone and mic together
                     let mixed = (tone_sample + mic_sample).clamp(-1.0, 1.0);
@@ -637,6 +678,15 @@ fn build_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     let value = T::from_sample(mixed);
                     for channel in frame.iter_mut() {
                         *channel = value;
+                    }
+                }
+
+                // Decrement ducking hold counter (only when key is up and ducking is enabled)
+                if ducking_enabled && !key_down {
+                    let current_hold = mic_ducking_hold.load(Ordering::Relaxed);
+                    if current_hold > 0 {
+                        let new_hold = current_hold.saturating_sub(samples_in_frame);
+                        mic_ducking_hold.store(new_hold, Ordering::Relaxed);
                     }
                 }
 

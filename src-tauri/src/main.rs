@@ -60,6 +60,7 @@ fn update_settings(state: tauri::State<AppState>, settings: Settings) -> Result<
         engine.set_sidetone_volume(settings.sidetone_volume);
         engine.set_local_sidetone_volume(settings.local_sidetone_volume);
         engine.set_mic_volume(settings.mic_volume);
+        engine.set_mic_ducking(settings.mic_ducking);
 
         // Convert config sidetone route to audio sidetone route
         let audio_route = match settings.sidetone_route {

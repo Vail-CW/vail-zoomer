@@ -54,6 +54,8 @@ pub struct Settings {
     // Audio settings
     pub mic_volume: f32,
     pub mix_mode: MixMode,
+    #[serde(default)]
+    pub mic_ducking: bool,  // Mute mic while sending CW (with 250ms hold after key up)
     pub local_output_device: Option<String>,  // For local sidetone monitoring
 
     // Device settings
@@ -80,6 +82,7 @@ impl Default for Settings {
             sidetone_route: SidetoneRoute::default(),
             mic_volume: 1.0,
             mix_mode: MixMode::default(),
+            mic_ducking: false,
             local_output_device: None,
             midi_device: None,
             input_device: None,
