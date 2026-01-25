@@ -185,6 +185,34 @@ fn start_audio_with_devices(
 }
 
 #[tauri::command]
+fn start_audio_with_all_devices(
+    state: tauri::State<AppState>,
+    output_device: Option<String>,
+    input_device: Option<String>,
+    local_device: Option<String>,
+) -> Result<(), String> {
+    let mut engine_lock = state.audio_engine.lock();
+
+    if engine_lock.is_none() {
+        let settings = state.settings.lock().clone();
+        let engine = AudioEngineHandle::new(settings.sidetone_frequency, settings.sidetone_volume)?;
+        *engine_lock = Some(engine);
+    }
+
+    if let Some(ref engine) = *engine_lock {
+        let settings = state.settings.lock().clone();
+        let audio_route = match settings.sidetone_route {
+            config::SidetoneRoute::OutputOnly => audio::SidetoneRoute::OutputOnly,
+            config::SidetoneRoute::LocalOnly => audio::SidetoneRoute::LocalOnly,
+            config::SidetoneRoute::Both => audio::SidetoneRoute::Both,
+        };
+        engine.start_with_all_devices(output_device, input_device, local_device, audio_route)?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn stop_audio(state: tauri::State<AppState>) {
     if let Some(ref engine) = *state.audio_engine.lock() {
         let _ = engine.stop();
@@ -383,6 +411,7 @@ fn main() {
             list_input_devices,
             start_audio,
             start_audio_with_devices,
+            start_audio_with_all_devices,
             stop_audio,
             set_mic_volume,
             key_down,

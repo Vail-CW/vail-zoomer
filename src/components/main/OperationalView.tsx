@@ -2,6 +2,11 @@ import { useState } from "react";
 import { BigButton } from "../shared/BigButton";
 import { BigSelect } from "../shared/BigSelect";
 
+interface DeviceInfo {
+  display_name: string;
+  internal_name: string;
+}
+
 const KEYER_TYPES = [
   { value: "Straight", label: "Straight Key", description: "One paddle, you control all timing" },
   { value: "Bug", label: "Bug (auto dits)", description: "Automatic dits, manual dahs" },
@@ -34,6 +39,11 @@ interface OperationalViewProps {
   micDucking: boolean;
   outputLevel: number;
 
+  // Local device for sidetone output
+  outputDevices: DeviceInfo[];
+  selectedLocalDevice: string | null;
+  onLocalDeviceChange: (device: string | null) => void;
+
   // Handlers
   onKeyerTypeChange: (type: string) => void;
   onWpmChange: (wpm: number) => void;
@@ -62,6 +72,9 @@ export function OperationalView({
   micVolume,
   micDucking,
   outputLevel,
+  outputDevices,
+  selectedLocalDevice,
+  onLocalDeviceChange,
   onKeyerTypeChange,
   onWpmChange,
   onSidetoneFrequencyChange,
@@ -249,6 +262,20 @@ export function OperationalView({
           <p className="text-sm text-gray-500 mt-1">
             Use headphones to prevent feedback from your sidetone and others on the call.
           </p>
+        </div>
+
+        {/* Sidetone output device selector */}
+        <div>
+          <label className="block text-lg text-gray-300 mb-2">Sidetone Output</label>
+          <BigSelect
+            value={selectedLocalDevice || ""}
+            onChange={(v) => onLocalDeviceChange(v || null)}
+            options={outputDevices.map((d) => ({
+              value: d.internal_name,
+              label: d.display_name,
+            }))}
+            placeholder="System Default"
+          />
         </div>
 
         {/* Mic volume slider */}

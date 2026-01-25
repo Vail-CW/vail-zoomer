@@ -87,6 +87,7 @@ function App() {
   // Update state
   const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string>("");
 
   // Settings state
   const [settings, setSettings] = useState<Settings>({
@@ -178,11 +179,12 @@ function App() {
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
 
-      // Start audio engine with saved devices
+      // Start audio engine with saved devices (including local sidetone device)
       try {
-        await invoke("start_audio_with_devices", {
+        await invoke("start_audio_with_all_devices", {
           outputDevice: savedSettings.output_device,
           inputDevice: savedSettings.input_device,
+          localDevice: savedSettings.local_output_device,
         });
         setAudioStarted(true);
 
@@ -323,10 +325,20 @@ function App() {
   const clearText = () => setCwText("");
 
   // Restart audio with selected devices and save to settings
-  const restartAudio = async (outputDevice: string | null, inputDevice: string | null) => {
+  const restartAudio = async (
+    outputDevice: string | null,
+    inputDevice: string | null,
+    localDevice?: string | null
+  ) => {
     try {
       await invoke("stop_audio");
-      await invoke("start_audio_with_devices", { outputDevice, inputDevice });
+      // Use localDevice if provided, otherwise fall back to current selectedLocalDevice
+      const effectiveLocalDevice = localDevice !== undefined ? localDevice : selectedLocalDevice;
+      await invoke("start_audio_with_all_devices", {
+        outputDevice,
+        inputDevice,
+        localDevice: effectiveLocalDevice,
+      });
       setSelectedOutputDevice(outputDevice);
       setSelectedInputDevice(inputDevice);
       setAudioStarted(true);
@@ -367,6 +379,13 @@ function App() {
       await invoke("update_settings", {
         settings: { ...settings, sidetone_route: "Both" }
       });
+      // Restart audio to create the local stream (route changes don't take effect otherwise)
+      await invoke("stop_audio");
+      await invoke("start_audio_with_all_devices", {
+        outputDevice: selectedOutputDevice,
+        inputDevice: selectedInputDevice,
+        localDevice: selectedLocalDevice,
+      });
     }
 
     await invoke("key_down", { isDit });
@@ -377,6 +396,13 @@ function App() {
       if (needsLocalAudio) {
         await invoke("update_settings", {
           settings: { ...settings, sidetone_route: originalRoute }
+        });
+        // Restart audio to apply the route change
+        await invoke("stop_audio");
+        await invoke("start_audio_with_all_devices", {
+          outputDevice: selectedOutputDevice,
+          inputDevice: selectedInputDevice,
+          localDevice: selectedLocalDevice,
         });
       }
     }, isDit ? 100 : 300);
@@ -391,14 +417,34 @@ function App() {
 
   // Update handlers
   const handleInstallUpdate = async () => {
-    if (!updateAvailable) return;
+    if (!updateAvailable || isInstallingUpdate) return;
     setIsInstallingUpdate(true);
+    setUpdateStatus("Downloading...");
+    let downloadedBytes = 0;
+    let totalBytes = 0;
     try {
-      await updateAvailable.downloadAndInstall();
+      await updateAvailable.downloadAndInstall((event) => {
+        if (event.event === "Started" && event.data.contentLength) {
+          totalBytes = event.data.contentLength;
+          setUpdateStatus("Downloading... 0%");
+        } else if (event.event === "Progress" && totalBytes > 0) {
+          downloadedBytes += event.data.chunkLength;
+          const percent = Math.round((downloadedBytes / totalBytes) * 100);
+          setUpdateStatus(`Downloading... ${percent}%`);
+        } else if (event.event === "Finished") {
+          setUpdateStatus("Installing...");
+        }
+      });
+      setUpdateStatus("Restarting...");
       await relaunch();
     } catch (err) {
       console.error("Failed to install update:", err);
-      setIsInstallingUpdate(false);
+      setUpdateStatus(`Error: ${err}`);
+      // Reset after showing error briefly
+      setTimeout(() => {
+        setIsInstallingUpdate(false);
+        setUpdateStatus("");
+      }, 3000);
     }
   };
 
@@ -409,7 +455,9 @@ function App() {
       <div className="fixed top-0 left-0 right-0 p-3 bg-green-900/90 border-b border-green-700 z-50">
         <div className="flex items-center justify-center gap-4">
           <span className="text-green-300 text-lg">
-            Update Available: v{updateAvailable.version}
+            {isInstallingUpdate && updateStatus
+              ? updateStatus
+              : `Update Available: v${updateAvailable.version}`}
           </span>
           <BigButton
             variant="success"
@@ -417,14 +465,16 @@ function App() {
             disabled={isInstallingUpdate}
             className="!min-h-0 !py-2 !px-4 !text-base"
           >
-            {isInstallingUpdate ? "Installing..." : "Install & Restart"}
+            {isInstallingUpdate ? (updateStatus || "Installing...") : "Install & Restart"}
           </BigButton>
-          <button
-            onClick={() => setUpdateAvailable(null)}
-            className="text-green-400 hover:text-white"
-          >
-            Later
-          </button>
+          {!isInstallingUpdate && (
+            <button
+              onClick={() => setUpdateAvailable(null)}
+              className="text-green-400 hover:text-white"
+            >
+              Later
+            </button>
+          )}
         </div>
       </div>
     );
@@ -450,10 +500,17 @@ function App() {
             sidetoneFrequency={settings.sidetone_frequency}
             midiConnected={midiConnected}
             isKeyDown={isKeyDown}
+            outputDevices={outputDevices}
+            selectedLocalDevice={selectedLocalDevice}
             onSelectMidiDevice={connectMidi}
             onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
             onWpmChange={(wpm) => updateSettings({ wpm })}
             onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}
+            onLocalDeviceChange={(device) => {
+              setSelectedLocalDevice(device);
+              updateSettings({ local_output_device: device });
+              restartAudio(selectedOutputDevice, selectedInputDevice, device);
+            }}
             onTestDit={() => testTone(true)}
             onTestDah={() => testTone(false)}
             onNext={() => setWizardStep(2)}
@@ -483,8 +540,12 @@ function App() {
             onLocalDeviceChange={(device) => {
               setSelectedLocalDevice(device);
               updateSettings({ local_output_device: device });
+              restartAudio(selectedOutputDevice, selectedInputDevice, device);
             }}
-            onSidetoneRouteChange={(route) => updateSettings({ sidetone_route: route })}
+            onSidetoneRouteChange={async (route) => {
+              await updateSettings({ sidetone_route: route });
+              restartAudio(selectedOutputDevice, selectedInputDevice, selectedLocalDevice);
+            }}
             onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
             onTestTone={() => testTone(true)}
             onBack={() => setWizardStep(2)}
@@ -533,6 +594,13 @@ function App() {
         micVolume={settings.mic_volume}
         micDucking={settings.mic_ducking}
         outputLevel={outputLevel}
+        outputDevices={outputDevices}
+        selectedLocalDevice={selectedLocalDevice}
+        onLocalDeviceChange={(device) => {
+          setSelectedLocalDevice(device);
+          updateSettings({ local_output_device: device });
+          restartAudio(selectedOutputDevice, selectedInputDevice, device);
+        }}
         onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
         onWpmChange={(wpm) => updateSettings({ wpm })}
         onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}

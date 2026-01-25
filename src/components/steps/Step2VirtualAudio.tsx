@@ -135,16 +135,19 @@ export function Step2VirtualAudio({
               )}
 
               {setupComplete && (
-                <p className="text-sm text-green-400">Virtual audio device created successfully!</p>
+                <p className="text-sm text-green-400">
+                  Virtual audio device created! In Zoom, select "Vail Zoomer Microphone" as your microphone.
+                </p>
               )}
             </div>
 
             <InfoBox variant="info" title="Manual Setup">
               <p className="text-sm">
-                If auto setup doesn't work, you can create a virtual sink manually:
+                If auto setup doesn't work, restart your system and try again. Or create devices manually:
               </p>
-              <code className="block mt-2 text-xs bg-gray-900 p-2 rounded overflow-x-auto">
-                pactl load-module module-null-sink sink_name=VailZoomer sink_properties=device.description=VailZoomer
+              <code className="block mt-2 text-xs bg-gray-900 p-2 rounded overflow-x-auto whitespace-pre-wrap">
+                pactl load-module module-null-sink sink_name=VailZoomer sink_properties=device.description=VailZoomer{"\n"}
+                pactl load-module module-null-sink sink_name=VailZoomerMic media.class=Audio/Source/Virtual sink_properties=device.description=Vail_Zoomer_Microphone
               </code>
             </InfoBox>
           </div>

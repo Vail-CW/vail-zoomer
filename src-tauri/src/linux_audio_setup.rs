@@ -41,19 +41,46 @@ pub struct SetupResult {
 
 #[cfg(target_os = "linux")]
 const PIPEWIRE_CONFIG: &str = r#"# Vail Zoomer Virtual Audio Device
-# Creates a loopback that provides both a sink (for app output) and source (for Zoom input)
+# Creates a virtual sink and source for routing audio to Zoom/video conferencing apps
 context.modules = [
+  # Null sink - Vail Zoomer sends audio here
+  { name = libpipewire-module-adapter
+    args = {
+      factory.name = support.null-audio-sink
+      node.name = "VailZoomer"
+      node.description = "Vail Zoomer"
+      media.class = "Audio/Sink"
+      object.linger = true
+      audio.position = [ FL FR ]
+      monitor.channel-volumes = true
+      monitor.passthrough = true
+    }
+  }
+  # Virtual source - appears as microphone to Zoom
+  { name = libpipewire-module-adapter
+    args = {
+      factory.name = support.null-audio-sink
+      node.name = "VailZoomerMic"
+      node.description = "Vail Zoomer Microphone"
+      media.class = "Audio/Source/Virtual"
+      object.linger = true
+      audio.position = [ FL FR ]
+    }
+  }
+  # Loopback to connect sink monitor -> virtual source
   { name = libpipewire-module-loopback
     args = {
-      node.description = "Vail Zoomer"
+      node.description = "Vail Zoomer Link"
+      node.passive = true
       capture.props = {
-        node.name = "VailZoomer"
-        media.class = "Audio/Sink"
+        node.name = "VailZoomerLink.capture"
+        node.target = "VailZoomer"
         audio.position = [ FL FR ]
       }
       playback.props = {
-        node.name = "VailZoomerMic"
-        media.class = "Audio/Source"
+        node.name = "VailZoomerLink.playback"
+        node.target = "VailZoomerMic"
+        stream.dont-remix = true
         audio.position = [ FL FR ]
       }
     }
@@ -223,7 +250,7 @@ pub fn detect_audio_system() -> AudioSystem {
     AudioSystem::Unknown
 }
 
-/// Check if the VailZoomerMic source exists
+/// Check if the VailZoomer sink and VailZoomerMic source exist
 #[cfg(target_os = "linux")]
 pub fn check_virtual_audio_device() -> Result<VirtualAudioStatus, String> {
     let pactl_installed = is_pactl_installed();
@@ -239,16 +266,29 @@ pub fn check_virtual_audio_device() -> Result<VirtualAudioStatus, String> {
     }
 
     // Check for the source (VailZoomerMic) which is what Zoom sees
-    let output = Command::new("pactl")
+    let source_output = Command::new("pactl")
         .args(["list", "sources", "short"])
         .output()
         .map_err(|e| format!("Failed to run pactl: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let exists = stdout.lines().any(|line| line.contains("VailZoomerMic"));
+    let source_stdout = String::from_utf8_lossy(&source_output.stdout);
+    let source_exists = source_stdout
+        .lines()
+        .any(|line| line.contains("VailZoomerMic"));
+
+    // Also check for the sink (VailZoomer) where the app sends audio
+    let sink_output = Command::new("pactl")
+        .args(["list", "sinks", "short"])
+        .output()
+        .map_err(|e| format!("Failed to run pactl: {}", e))?;
+
+    let sink_stdout = String::from_utf8_lossy(&sink_output.stdout);
+    let sink_exists = sink_stdout.lines().any(|line| {
+        line.contains("VailZoomer") && !line.contains("VailZoomerMic")
+    });
 
     Ok(VirtualAudioStatus {
-        exists,
+        exists: source_exists && sink_exists,
         audio_system,
         pactl_installed: true,
     })
