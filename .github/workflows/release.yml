@@ -64,6 +64,11 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev
 
+      - name: Install dependencies (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          brew install create-dmg
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
