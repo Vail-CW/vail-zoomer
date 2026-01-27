@@ -2,6 +2,8 @@ mod sidetone;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig, FromSample};
+#[cfg(target_os = "linux")]
+use cpal::HostId;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -126,22 +128,26 @@ impl AudioEngineHandle {
 
     /// List available audio output devices with friendly names
     pub fn list_output_devices() -> Vec<DeviceInfo> {
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(devices) = list_pulseaudio_sinks() {
-                return devices;
-            }
-        }
+        let host = platform_host();
 
-        // Fallback to cpal names (used on Windows/macOS or if PulseAudio unavailable)
-        let host = cpal::default_host();
+        #[cfg(target_os = "linux")]
+        let hw_labels = alsa_hw_labels();
+
         host.output_devices()
             .map(|devices| {
                 devices
-                    .filter_map(|d| {
-                        d.name().ok().map(|name| DeviceInfo {
-                            display_name: name.clone(),
-                            internal_name: name,
+                    .enumerate()
+                    .filter_map(|(i, d)| {
+                        d.name().ok().map(|name| {
+                            #[cfg(target_os = "linux")]
+                            let display = friendly_device_name(&name, &hw_labels, i);
+                            #[cfg(not(target_os = "linux"))]
+                            let display = name.clone();
+
+                            DeviceInfo {
+                                display_name: display,
+                                internal_name: name,
+                            }
                         })
                     })
                     .collect()
@@ -151,22 +157,26 @@ impl AudioEngineHandle {
 
     /// List available audio input devices with friendly names
     pub fn list_input_devices() -> Vec<DeviceInfo> {
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(devices) = list_pulseaudio_sources() {
-                return devices;
-            }
-        }
+        let host = platform_host();
 
-        // Fallback to cpal names (used on Windows/macOS or if PulseAudio unavailable)
-        let host = cpal::default_host();
+        #[cfg(target_os = "linux")]
+        let hw_labels = alsa_hw_labels();
+
         host.input_devices()
             .map(|devices| {
                 devices
-                    .filter_map(|d| {
-                        d.name().ok().map(|name| DeviceInfo {
-                            display_name: name.clone(),
-                            internal_name: name,
+                    .enumerate()
+                    .filter_map(|(i, d)| {
+                        d.name().ok().map(|name| {
+                            #[cfg(target_os = "linux")]
+                            let display = friendly_device_name(&name, &hw_labels, i);
+                            #[cfg(not(target_os = "linux"))]
+                            let display = name.clone();
+
+                            DeviceInfo {
+                                display_name: display,
+                                internal_name: name,
+                            }
                         })
                     })
                     .collect()
@@ -293,6 +303,73 @@ impl AudioEngineHandle {
 impl Drop for AudioEngineHandle {
     fn drop(&mut self) {
         let _ = self.command_tx.send(AudioCommand::Shutdown);
+    }
+}
+
+// --- Linux ALSA helpers ---
+
+/// Force ALSA backend instead of PulseAudio/PipeWire on Linux
+#[cfg(target_os = "linux")]
+fn alsa_host() -> cpal::Host {
+    cpal::host_from_id(HostId::Alsa).unwrap_or_else(|_| {
+        eprintln!("[audio] ALSA host not available, falling back to default");
+        cpal::default_host()
+    })
+}
+
+/// Return the appropriate host for the current platform
+#[cfg(not(target_os = "linux"))]
+fn platform_host() -> cpal::Host {
+    cpal::default_host()
+}
+
+#[cfg(target_os = "linux")]
+fn platform_host() -> cpal::Host {
+    alsa_host()
+}
+
+/// Build ALSA hw:X,Y labels directly from ALSA card enumeration
+#[cfg(target_os = "linux")]
+fn alsa_hw_labels() -> Vec<(String, String)> {
+    let mut labels = Vec::new();
+
+    if let Ok(iter) = alsa::card::Iter::new() {
+        for card_result in iter {
+            if let Ok(card) = card_result {
+                let card_index = card.get_index();
+                let ctl_id = format!("hw:{}", card_index);
+                if let Ok(ctl) = alsa::ctl::Ctl::new(&ctl_id, false) {
+                    if let Ok(card_info) = ctl.card_info() {
+                        let card_name = card_info
+                            .get_name()
+                            .unwrap_or("Unknown")
+                            .to_string();
+                        // Probe common PCM device numbers
+                        for dev in 0..4 {
+                            labels.push((
+                                card_name.clone(),
+                                format!("hw:{},{}", card_index, dev),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    labels
+}
+
+/// Create a user-friendly display name for an ALSA device
+#[cfg(target_os = "linux")]
+fn friendly_device_name(cpal_name: &str, hw_labels: &[(String, String)], index: usize) -> String {
+    if let Some((card_name, hw_id)) = hw_labels.iter().find(|(card, _)| {
+        cpal_name.to_lowercase().contains(&card.to_lowercase())
+            || card.to_lowercase().contains(&cpal_name.to_lowercase())
+    }) {
+        format!("[ALSA #{}] {} \u{2014} {}", index, card_name, hw_id)
+    } else {
+        format!("[ALSA #{}] {}", index, cpal_name)
     }
 }
 
@@ -461,7 +538,7 @@ fn create_input_stream(
     producer: MicProducer,
     mic_level: Arc<AtomicU32>,
 ) -> Result<Stream, String> {
-    let host = cpal::default_host();
+    let host = platform_host();
 
     let device = if let Some(name) = device_name {
         host.input_devices()
@@ -548,9 +625,16 @@ fn create_output_stream(
     mic_ducking_enabled: Arc<AtomicBool>,
     mic_ducking_hold: Arc<AtomicU32>,
 ) -> Result<Stream, String> {
-    let host = cpal::default_host();
+    let host = platform_host();
 
     let device = if let Some(name) = device_name {
+        // On Linux, reject stale PulseAudio-format device IDs from old config
+        #[cfg(target_os = "linux")]
+        if name.starts_with("alsa_output.") || name.starts_with("pulse_") {
+            eprintln!("[audio] Detected old PulseAudio device ID '{}', please reselect an ALSA device", name);
+            return Err("Old PulseAudio device detected. Please reselect an ALSA device.".into());
+        }
+
         let devices: Vec<_> = host.output_devices()
             .map_err(|e| e.to_string())?
             .collect();
@@ -714,12 +798,14 @@ fn create_local_output_stream(
     is_key_down: Arc<AtomicBool>,
     _local_volume: Arc<AtomicU32>,
 ) -> Result<Stream, String> {
-    let host = cpal::default_host();
+    let host = platform_host();
 
     let device = if let Some(name) = device_name {
         host.output_devices()
             .map_err(|e| e.to_string())?
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+            .find(|d| d.name().map(|n| {
+                n == name || n.contains(name) || name.contains(&n)
+            }).unwrap_or(false))
             .ok_or_else(|| format!("Local output device '{}' not found", name))?
     } else {
         host.default_output_device()
@@ -778,97 +864,3 @@ fn build_local_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     Ok(stream_result)
 }
 
-// Linux-specific PulseAudio device enumeration for friendly names
-// PipeWire also supports these APIs through PulseAudio compatibility
-
-#[cfg(target_os = "linux")]
-fn list_pulseaudio_sinks() -> Option<Vec<DeviceInfo>> {
-    use pulsectl::controllers::SinkController;
-    use pulsectl::controllers::DeviceControl;
-
-    let mut handler = SinkController::create().ok()?;
-    let devices = handler.list_devices().ok()?;
-
-    // Get cpal device names for mapping
-    let host = cpal::default_host();
-    let cpal_devices: Vec<String> = host
-        .output_devices()
-        .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default();
-
-    let result: Vec<DeviceInfo> = devices
-        .into_iter()
-        .filter_map(|dev| {
-            let description = dev.description.clone()?;
-            let pa_name = dev.name.clone()?;
-
-            // Try to find matching cpal device
-            // cpal on Linux uses ALSA names which may contain the PulseAudio device name
-            let internal_name = cpal_devices
-                .iter()
-                .find(|cpal_name| {
-                    // Check if cpal name contains the PA device name or vice versa
-                    cpal_name.contains(&pa_name) || pa_name.contains(cpal_name.as_str())
-                })
-                .cloned()
-                // If no match found, use PulseAudio name directly
-                // (cpal may be using PulseAudio backend)
-                .unwrap_or_else(|| pa_name.clone());
-
-            Some(DeviceInfo {
-                display_name: description,
-                internal_name,
-            })
-        })
-        .collect();
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn list_pulseaudio_sources() -> Option<Vec<DeviceInfo>> {
-    use pulsectl::controllers::SourceController;
-    use pulsectl::controllers::DeviceControl;
-
-    let mut handler = SourceController::create().ok()?;
-    let devices = handler.list_devices().ok()?;
-
-    // Get cpal device names for mapping
-    let host = cpal::default_host();
-    let cpal_devices: Vec<String> = host
-        .input_devices()
-        .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default();
-
-    let result: Vec<DeviceInfo> = devices
-        .into_iter()
-        .filter_map(|dev| {
-            let description = dev.description.clone()?;
-            let pa_name = dev.name.clone()?;
-
-            // Try to find matching cpal device
-            let internal_name = cpal_devices
-                .iter()
-                .find(|cpal_name| {
-                    cpal_name.contains(&pa_name) || pa_name.contains(cpal_name.as_str())
-                })
-                .cloned()
-                .unwrap_or_else(|| pa_name.clone());
-
-            Some(DeviceInfo {
-                display_name: description,
-                internal_name,
-            })
-        })
-        .collect();
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
