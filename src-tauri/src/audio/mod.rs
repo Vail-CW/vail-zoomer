@@ -333,24 +333,22 @@ fn platform_host() -> cpal::Host {
 fn alsa_hw_labels() -> Vec<(String, String)> {
     let mut labels = Vec::new();
 
-    if let Ok(iter) = alsa::card::Iter::new() {
-        for card_result in iter {
-            if let Ok(card) = card_result {
-                let card_index = card.get_index();
-                let ctl_id = format!("hw:{}", card_index);
-                if let Ok(ctl) = alsa::ctl::Ctl::new(&ctl_id, false) {
-                    if let Ok(card_info) = ctl.card_info() {
-                        let card_name = card_info
-                            .get_name()
-                            .unwrap_or("Unknown")
-                            .to_string();
-                        // Probe common PCM device numbers
-                        for dev in 0..4 {
-                            labels.push((
-                                card_name.clone(),
-                                format!("hw:{},{}", card_index, dev),
-                            ));
-                        }
+    for card_result in alsa::card::Iter::new() {
+        if let Ok(card) = card_result {
+            let card_index = card.get_index();
+            let ctl_id = format!("hw:{}", card_index);
+            if let Ok(ctl) = alsa::ctl::Ctl::new(&ctl_id, false) {
+                if let Ok(card_info) = ctl.card_info() {
+                    let card_name = card_info
+                        .get_name()
+                        .unwrap_or("Unknown")
+                        .to_string();
+                    // Probe common PCM device numbers
+                    for dev in 0..4 {
+                        labels.push((
+                            card_name.clone(),
+                            format!("hw:{},{}", card_index, dev),
+                        ));
                     }
                 }
             }
