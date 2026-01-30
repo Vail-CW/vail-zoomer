@@ -67,6 +67,7 @@ function App() {
   const [midiConnected, setMidiConnected] = useState(false);
   const [midiDevices, setMidiDevices] = useState<string[]>([]);
   const [selectedMidiDevice, setSelectedMidiDevice] = useState<string | null>(null);
+  const [midiError, setMidiError] = useState<string | null>(null);
   const [audioStarted, setAudioStarted] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [currentOS, setCurrentOS] = useState<OSType>("windows");
@@ -146,6 +147,13 @@ function App() {
 
       // Load settings from backend first
       const savedSettings = await invoke<Settings>("get_settings");
+
+      // Migrate deprecated "LocalOnly" sidetone route to "Both"
+      if (savedSettings.sidetone_route === "LocalOnly") {
+        savedSettings.sidetone_route = "Both";
+        await invoke("update_settings", { settings: savedSettings });
+      }
+
       settingsRef.current = savedSettings;  // Update ref immediately (sync)
       setSettings(savedSettings);
 
@@ -279,26 +287,34 @@ function App() {
         if (selectedMidiDevice && !devices.includes(selectedMidiDevice)) {
           setMidiConnected(false);
           setSelectedMidiDevice(null);
+          setMidiError(null);
         }
+
+        // Clear failed status for devices that were unplugged (so they retry on replug)
+        autoConnectFailedRef.current.forEach(d => {
+          if (!devices.includes(d)) autoConnectFailedRef.current.delete(d);
+        });
 
         // Auto-connect if not connected and a Vail device appears
         if (!midiConnected && devices.length > 0) {
           // First try the saved device from settings
           const savedDevice = settings.midi_device;
-          if (savedDevice && devices.includes(savedDevice)) {
-            connectMidi(savedDevice);
+          if (savedDevice && devices.includes(savedDevice) && !autoConnectFailedRef.current.has(savedDevice)) {
+            connectMidi(savedDevice, false);
           } else {
             // Otherwise auto-detect Vail adapter
             const vailDevice = devices.find(d =>
-              d.toLowerCase().includes("vail") ||
-              d.toLowerCase().includes("xiao") ||
-              d.toLowerCase().includes("seeed") ||
-              d.toLowerCase().includes("samd21") ||
-              d.toLowerCase().includes("qt py") ||
-              d.toLowerCase().includes("qtpy")
+              !autoConnectFailedRef.current.has(d) && (
+                d.toLowerCase().includes("vail") ||
+                d.toLowerCase().includes("xiao") ||
+                d.toLowerCase().includes("seeed") ||
+                d.toLowerCase().includes("samd21") ||
+                d.toLowerCase().includes("qt py") ||
+                d.toLowerCase().includes("qtpy")
+              )
             );
             if (vailDevice) {
-              connectMidi(vailDevice);
+              connectMidi(vailDevice, false);
             }
           }
         }
@@ -310,15 +326,23 @@ function App() {
     return () => clearInterval(interval);
   }, [selectedMidiDevice, midiConnected, settings.midi_device]);
 
-  const connectMidi = async (deviceName: string) => {
+  const autoConnectFailedRef = useRef<Set<string>>(new Set());
+
+  const connectMidi = async (deviceName: string, showError = true) => {
     try {
+      setMidiError(null);
       await invoke("connect_midi_device", { deviceName });
       setSelectedMidiDevice(deviceName);
       setMidiConnected(true);
+      autoConnectFailedRef.current.delete(deviceName);
       updateSettings({ midi_device: deviceName });
     } catch (err) {
       console.error("Failed to connect MIDI:", err);
       setMidiConnected(false);
+      autoConnectFailedRef.current.add(deviceName);
+      if (showError) {
+        setMidiError(`Could not connect to "${deviceName}". Make sure no other application is using this device.`);
+      }
     }
   };
 
@@ -499,6 +523,7 @@ function App() {
             wpm={settings.wpm}
             sidetoneFrequency={settings.sidetone_frequency}
             midiConnected={midiConnected}
+            midiError={midiError}
             isKeyDown={isKeyDown}
             outputDevices={outputDevices}
             selectedLocalDevice={selectedLocalDevice}

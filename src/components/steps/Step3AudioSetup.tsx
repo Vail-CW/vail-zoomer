@@ -145,7 +145,7 @@ export function Step3AudioSetup({
         {/* Sidetone routing - compact */}
         <div className="space-y-2">
           <label className="block text-sm text-gray-300">How do you want to hear morse tones?</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => onSidetoneRouteChange("OutputOnly")}
               className={`p-2 text-center rounded-lg border-2 transition-colors ${
@@ -154,19 +154,8 @@ export function Step3AudioSetup({
                   : "bg-gray-800 border-gray-600 hover:border-gray-500"
               }`}
             >
-              <div className="text-sm font-medium">Vail speaker</div>
-              <div className="text-xs text-gray-400">No computer sound</div>
-            </button>
-            <button
-              onClick={() => onSidetoneRouteChange("LocalOnly")}
-              className={`p-2 text-center rounded-lg border-2 transition-colors ${
-                sidetoneRoute === "LocalOnly"
-                  ? "bg-amber-500/20 border-amber-500"
-                  : "bg-gray-800 border-gray-600 hover:border-gray-500"
-              }`}
-            >
-              <div className="text-sm font-medium">Computer</div>
-              <div className="text-xs text-gray-400">Speakers/headphones</div>
+              <div className="text-sm font-medium">Vail adapter only</div>
+              <div className="text-xs text-gray-400">Built-in speaker</div>
             </button>
             <button
               onClick={() => onSidetoneRouteChange("Both")}
@@ -177,13 +166,16 @@ export function Step3AudioSetup({
               }`}
             >
               <div className="text-sm font-medium">Both</div>
-              <div className="text-xs text-gray-400">Vail + computer</div>
+              <div className="text-xs text-gray-400">Vail + computer speakers</div>
             </button>
           </div>
+          <p className="text-xs text-gray-500">
+            Tip: Hold the dit paddle for 10 seconds to mute the Vail adapter speaker (power cycle to unmute)
+          </p>
         </div>
 
         {/* Local output device - show if using local sidetone */}
-        {(sidetoneRoute === "LocalOnly" || sidetoneRoute === "Both") && (
+        {sidetoneRoute === "Both" && (
           <div className="space-y-1">
             <label className="block text-sm text-gray-300">Your speakers/headphones:</label>
             <BigSelect

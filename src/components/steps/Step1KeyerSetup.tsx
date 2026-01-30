@@ -29,6 +29,7 @@ interface Step1KeyerSetupProps {
   wpm: number;
   sidetoneFrequency: number;
   midiConnected: boolean;
+  midiError: string | null;
   isKeyDown: boolean;
   outputDevices: DeviceInfo[];
   selectedLocalDevice: string | null;
@@ -49,6 +50,7 @@ export function Step1KeyerSetup({
   wpm,
   sidetoneFrequency,
   midiConnected,
+  midiError,
   isKeyDown,
   outputDevices,
   selectedLocalDevice,
@@ -187,6 +189,13 @@ export function Step1KeyerSetup({
             <p className="text-sm">
               Please plug in your Vail Adapter. If you just plugged it in, wait a moment.
             </p>
+          </InfoBox>
+        )}
+
+        {/* Connection error */}
+        {midiError && !midiConnected && (
+          <InfoBox variant="warning" title="Connection failed">
+            <p className="text-sm">{midiError}</p>
           </InfoBox>
         )}
 
