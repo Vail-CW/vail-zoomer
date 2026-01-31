@@ -327,12 +327,6 @@ fn audio_thread(
         48000.0,
     )));
 
-    // Create ring buffer for mic audio
-    let ring_buffer = HeapRb::<f32>::new(RING_BUFFER_SIZE);
-    let (producer, consumer) = ring_buffer.split();
-    let producer = Arc::new(parking_lot::Mutex::new(producer));
-    let consumer = Arc::new(parking_lot::Mutex::new(consumer));
-
     loop {
         match command_rx.recv() {
             Ok(AudioCommand::Start { output_device, input_device, local_device, sidetone_route: route }) => {
@@ -340,6 +334,12 @@ fn audio_thread(
                 output_stream = None;
                 local_stream = None;
                 input_stream = None;
+
+                // Create fresh ring buffer for mic audio (prevents stale data issues)
+                let ring_buffer = HeapRb::<f32>::new(RING_BUFFER_SIZE);
+                let (producer, consumer) = ring_buffer.split();
+                let producer = Arc::new(parking_lot::Mutex::new(producer));
+                let consumer = Arc::new(parking_lot::Mutex::new(consumer));
 
                 // Update sidetone route
                 sidetone_route.store(route as u32, Ordering::Relaxed);
@@ -469,8 +469,30 @@ fn create_input_stream(
             .find(|d| d.name().map(|n| n == name).unwrap_or(false))
             .ok_or_else(|| format!("Input device '{}' not found", name))?
     } else {
-        host.default_input_device()
-            .ok_or_else(|| "No default input device".to_string())?
+        // On Linux with PipeWire, prefer using the "pipewire" or "default" ALSA device
+        #[cfg(target_os = "linux")]
+        {
+            eprintln!("[audio] No input device specified, looking for 'pipewire' or 'default' device...");
+            let devices: Vec<_> = host.input_devices()
+                .map_err(|e| e.to_string())?
+                .collect();
+
+            // Try to find "pipewire" device first, then "default", then fallback to default_input_device
+            devices.iter()
+                .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
+                .cloned()
+                .or_else(|| {
+                    eprintln!("[audio] pipewire/default not found for input, using system default");
+                    host.default_input_device()
+                })
+                .ok_or_else(|| "No default input device".to_string())?
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            host.default_input_device()
+                .ok_or_else(|| "No default input device".to_string())?
+        }
     };
 
     let config = device
@@ -598,8 +620,31 @@ fn create_output_stream(
         found_device.cloned()
             .ok_or_else(|| format!("Output device '{}' not found (tried: {:?})", name, search_names))?
     } else {
-        host.default_output_device()
-            .ok_or_else(|| "No default output device".to_string())?
+        // On Linux with PipeWire, prefer using the "pipewire" or "default" ALSA device
+        // instead of hardware devices which may be exclusively locked
+        #[cfg(target_os = "linux")]
+        {
+            eprintln!("[audio] No device specified, looking for 'pipewire' or 'default' device...");
+            let devices: Vec<_> = host.output_devices()
+                .map_err(|e| e.to_string())?
+                .collect();
+
+            // Try to find "pipewire" device first, then "default", then fallback to default_output_device
+            devices.iter()
+                .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
+                .cloned()
+                .or_else(|| {
+                    eprintln!("[audio] pipewire/default not found, using system default");
+                    host.default_output_device()
+                })
+                .ok_or_else(|| "No default output device".to_string())?
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            host.default_output_device()
+                .ok_or_else(|| "No default output device".to_string())?
+        }
     };
 
     let config = device
@@ -722,8 +767,30 @@ fn create_local_output_stream(
             .find(|d| d.name().map(|n| n == name).unwrap_or(false))
             .ok_or_else(|| format!("Local output device '{}' not found", name))?
     } else {
-        host.default_output_device()
-            .ok_or_else(|| "No default output device for local monitoring".to_string())?
+        // On Linux with PipeWire, prefer using the "pipewire" or "default" ALSA device
+        #[cfg(target_os = "linux")]
+        {
+            eprintln!("[audio] No local device specified, looking for 'pipewire' or 'default' device...");
+            let devices: Vec<_> = host.output_devices()
+                .map_err(|e| e.to_string())?
+                .collect();
+
+            // Try to find "pipewire" device first, then "default", then fallback to default_output_device
+            devices.iter()
+                .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
+                .cloned()
+                .or_else(|| {
+                    eprintln!("[audio] pipewire/default not found for local output, using system default");
+                    host.default_output_device()
+                })
+                .ok_or_else(|| "No default output device for local monitoring".to_string())?
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            host.default_output_device()
+                .ok_or_else(|| "No default output device for local monitoring".to_string())?
+        }
     };
 
     let config = device

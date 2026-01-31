@@ -183,6 +183,113 @@ fn install_pipewire_alsa() -> Result<(), String> {
     }
 }
 
+/// Check if libasound2-plugins is installed (needed for ALSA pulse plugin)
+#[cfg(target_os = "linux")]
+fn is_alsa_pulse_plugin_installed() -> bool {
+    Command::new("dpkg")
+        .args(["-s", "libasound2-plugins"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Install libasound2-plugins package (provides ALSA pulse plugin for PipeWire/PulseAudio integration)
+#[cfg(target_os = "linux")]
+fn install_alsa_pulse_plugin() -> Result<(), String> {
+    eprintln!("[linux_audio] Attempting to install libasound2-plugins...");
+
+    // Try pkexec for graphical sudo prompt
+    let result = Command::new("pkexec")
+        .args(["apt-get", "install", "-y", "libasound2-plugins"])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                eprintln!("[linux_audio] Successfully installed libasound2-plugins");
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Check if user cancelled the auth dialog
+                if stderr.contains("dismissed") || stderr.contains("cancelled") {
+                    Err("Installation cancelled. Please install manually: sudo apt install libasound2-plugins".to_string())
+                } else {
+                    Err(format!("Failed to install libasound2-plugins: {}", stderr))
+                }
+            }
+        }
+        Err(e) => {
+            Err(format!("Failed to run installer: {}. Please install manually: sudo apt install libasound2-plugins", e))
+        }
+    }
+}
+
+/// Create ALSA configuration for VailZoomer devices (both output and input)
+#[cfg(target_os = "linux")]
+fn create_alsa_vailzoomer_config() -> Result<(), String> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let home = std::env::var("HOME")
+        .map_err(|_| "Could not determine home directory".to_string())?;
+    let asoundrc_path = PathBuf::from(&home).join(".asoundrc");
+
+    let config_content = r#"# VailZoomer ALSA PCM devices
+
+# Output device - sends audio TO VailZoomer sink (for app to write mixed audio)
+pcm.VailZoomer {
+    type pulse
+    device "VailZoomer"
+    hint {
+        show on
+        description "Vail Zoomer Output (app writes here)"
+    }
+}
+
+ctl.VailZoomer {
+    type pulse
+    device "VailZoomer"
+}
+
+# Input device - captures audio FROM VailZoomerMic (for Zoom/Audacity to read)
+pcm.vailzoomer {
+    type pulse
+    device "VailZoomerMic"
+    hint {
+        show on
+        description "Vail Zoomer Microphone (for Zoom)"
+    }
+}
+
+ctl.vailzoomer {
+    type pulse
+    device "VailZoomerMic"
+}
+"#;
+
+    // Check if .asoundrc already exists
+    if asoundrc_path.exists() {
+        let existing = fs::read_to_string(&asoundrc_path)
+            .map_err(|e| format!("Failed to read .asoundrc: {}", e))?;
+
+        // Only add if VailZoomer config doesn't already exist
+        if !existing.contains("pcm.VailZoomer") && !existing.contains("pcm.vailzoomer") {
+            let updated = format!("{}\n{}", existing, config_content);
+            fs::write(&asoundrc_path, updated)
+                .map_err(|e| format!("Failed to update .asoundrc: {}", e))?;
+            eprintln!("[linux_audio] Added VailZoomer config to existing .asoundrc");
+        } else {
+            eprintln!("[linux_audio] VailZoomer config already exists in .asoundrc");
+        }
+    } else {
+        fs::write(&asoundrc_path, config_content)
+            .map_err(|e| format!("Failed to create .asoundrc: {}", e))?;
+        eprintln!("[linux_audio] Created .asoundrc with VailZoomer config");
+    }
+
+    Ok(())
+}
+
 /// Detect whether the system uses PipeWire or PulseAudio
 #[cfg(target_os = "linux")]
 pub fn detect_audio_system() -> AudioSystem {
@@ -330,56 +437,90 @@ fn setup_pipewire() -> Result<SetupResult, String> {
         install_pipewire_alsa()?;
     }
 
-    let config_dir = get_pipewire_config_dir();
-    let config_file = config_dir.join("vail-zoomer.conf");
+    // Use pactl to create virtual devices (works with PipeWire's PulseAudio compatibility layer)
+    // This is more reliable than PipeWire config files on some systems
+    eprintln!("[linux_audio] Creating virtual audio devices using pactl...");
 
-    // Create directory if it doesn't exist
-    fs::create_dir_all(&config_dir)
-        .map_err(|e| format!("Failed to create config directory {:?}: {}", config_dir, e))?;
-
-    // Write the config file
-    fs::write(&config_file, PIPEWIRE_CONFIG)
-        .map_err(|e| format!("Failed to write config file {:?}: {}", config_file, e))?;
-
-    // Restart PipeWire services (include pipewire-alsa to ensure ALSA bridge is active)
-    let restart_result = Command::new("systemctl")
-        .args(["--user", "restart", "pipewire", "pipewire-pulse", "pipewire-alsa"])
+    // Create null sink
+    let sink_result = Command::new("pactl")
+        .args([
+            "load-module",
+            "module-null-sink",
+            "sink_name=VailZoomer",
+            "sink_properties=device.description=\"Vail_Zoomer\"",
+        ])
         .output();
 
-    match restart_result {
+    match sink_result {
         Ok(output) => {
             if !output.status.success() {
-                // pipewire-alsa might not be a separate service on all systems, try without it
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("[linux_audio] Restart with pipewire-alsa failed ({}), trying without...", stderr);
-                let retry_result = Command::new("systemctl")
-                    .args(["--user", "restart", "pipewire", "pipewire-pulse"])
-                    .output();
-                if let Ok(retry_output) = retry_result {
-                    if !retry_output.status.success() {
-                        let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
-                        return Err(format!("Failed to restart PipeWire: {}", retry_stderr));
-                    }
+                // Device might already exist, check if it's just a duplicate error
+                if !stderr.contains("already") && !stderr.contains("exists") {
+                    return Err(format!("Failed to create VailZoomer sink: {}", stderr));
+                } else {
+                    eprintln!("[linux_audio] VailZoomer sink already exists, continuing...");
                 }
+            } else {
+                eprintln!("[linux_audio] Created VailZoomer sink");
             }
         }
         Err(e) => {
-            return Err(format!("Failed to run systemctl: {}", e));
+            return Err(format!("Failed to run pactl for sink creation: {}", e));
         }
     }
 
-    // Wait for the service to restart
-    thread::sleep(Duration::from_millis(2000));
+    // Create remap source
+    let source_result = Command::new("pactl")
+        .args([
+            "load-module",
+            "module-remap-source",
+            "master=VailZoomer.monitor",
+            "source_name=VailZoomerMic",
+            "source_properties=device.description=\"Vail_Zoomer_Microphone\"",
+        ])
+        .output();
+
+    match source_result {
+        Ok(output) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("already") && !stderr.contains("exists") {
+                    return Err(format!("Failed to create VailZoomerMic source: {}", stderr));
+                } else {
+                    eprintln!("[linux_audio] VailZoomerMic source already exists, continuing...");
+                }
+            } else {
+                eprintln!("[linux_audio] Created VailZoomerMic source");
+            }
+        }
+        Err(e) => {
+            return Err(format!("Failed to run pactl for source creation: {}", e));
+        }
+    }
+
+    // Ensure libasound2-plugins is installed (required for ALSA pulse plugin)
+    if !is_alsa_pulse_plugin_installed() {
+        eprintln!("[linux_audio] libasound2-plugins not installed, installing...");
+        install_alsa_pulse_plugin()?;
+    }
+
+    // Create ALSA configuration for vailzoomer device
+    eprintln!("[linux_audio] Creating ALSA configuration for vailzoomer device...");
+    create_alsa_vailzoomer_config()?;
+
+    // Wait a moment for devices to be ready
+    thread::sleep(Duration::from_millis(500));
 
     // Verify the device was created
     let status = check_virtual_audio_device()?;
     if status.exists {
         Ok(SetupResult {
             success: true,
-            message: "Virtual audio device created successfully. Select 'Vail Zoomer' as your output device.".to_string(),
+            message: "Virtual audio device created successfully.\n\nIn Vail Zoomer:\n- Set microphone to 'System Default'\n- Set output to 'VailZoomer'\n\nIn Zoom/recording apps:\n- Select 'vailzoomer' as your microphone".to_string(),
         })
     } else {
-        Err("Device was not created after restart. Please try logging out and back in, or restart your computer.".to_string())
+        Err("Devices were loaded but verification failed. They may still work - try restarting the app.".to_string())
     }
 }
 

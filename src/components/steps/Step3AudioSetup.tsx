@@ -32,14 +32,12 @@ export function Step3AudioSetup({
   inputDevices,
   outputDevices,
   selectedInputDevice,
-  selectedOutputDevice,
   selectedLocalDevice,
   sidetoneRoute,
   micLevel,
   micVolume,
   currentOS,
   onInputDeviceChange,
-  onOutputDeviceChange,
   onLocalDeviceChange,
   onSidetoneRouteChange,
   onMicVolumeChange,
@@ -47,18 +45,13 @@ export function Step3AudioSetup({
   onBack,
   onNext,
 }: Step3AudioSetupProps) {
-  const getVirtualDeviceName = () => {
-    switch (currentOS) {
-      case "macos":
-        return "BlackHole 2ch";
-      case "linux":
-        return "Vail Zoomer";
-      default:
-        return "CABLE Input";
-    }
-  };
-
-  const virtualDeviceName = getVirtualDeviceName();
+  // Check if VailZoomer setup is complete (Linux only)
+  const vailZoomerExists = currentOS === "linux" && outputDevices.some(d =>
+    d.internal_name === "VailZoomer" ||
+    d.display_name.includes("VailZoomer") ||
+    d.display_name.includes("Vail Zoomer")
+  );
+  const needsSetup = currentOS === "linux" && !vailZoomerExists;
 
   return (
     <WizardLayout
@@ -70,6 +63,15 @@ export function Step3AudioSetup({
       onNext={onNext}
     >
       <div className="max-w-xl mx-auto space-y-3">
+        {/* Warning if VailZoomer not set up yet */}
+        {needsSetup && micVolume === 0 && (
+          <InfoBox variant="warning">
+            <p className="text-sm">
+              <strong>Microphone is muted</strong> to prevent echo. Complete the Virtual Audio setup (previous step) to enable your microphone.
+            </p>
+          </InfoBox>
+        )}
+
         {/* Important reminder */}
         <InfoBox variant="info">
           <p className="text-sm">
@@ -83,10 +85,12 @@ export function Step3AudioSetup({
           <BigSelect
             value={selectedInputDevice || ""}
             onChange={(v) => onInputDeviceChange(v || null)}
-            options={inputDevices.map((d) => ({
-              value: d.internal_name,
-              label: d.display_name,
-            }))}
+            options={inputDevices
+              .filter((d) => !d.internal_name.toLowerCase().includes("vailzoomer") && !d.display_name.toLowerCase().includes("vail zoomer"))
+              .map((d) => ({
+                value: d.internal_name,
+                label: d.display_name,
+              }))}
             placeholder="System Default"
           />
 
@@ -126,73 +130,55 @@ export function Step3AudioSetup({
           )}
         </div>
 
-        {/* Output device selection */}
-        <div className="space-y-1">
-          <label className="block text-sm text-gray-300">
-            Output to Zoom (select <strong className="text-amber-400">{virtualDeviceName}</strong>):
-          </label>
-          <BigSelect
-            value={selectedOutputDevice || ""}
-            onChange={(v) => onOutputDeviceChange(v || null)}
-            options={outputDevices.map((d) => ({
-              value: d.internal_name,
-              label: d.display_name,
-            }))}
-            placeholder="System Default"
-          />
-        </div>
-
-        {/* Sidetone routing - compact */}
+        {/* Sidetone routing - simplified to match Windows version */}
         <div className="space-y-2">
-          <label className="block text-sm text-gray-300">How do you want to hear morse tones?</label>
-          <div className="grid grid-cols-3 gap-2">
+          <label className="block text-sm text-gray-300">Where do you want to hear morse tones?</label>
+          <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => onSidetoneRouteChange("OutputOnly")}
-              className={`p-2 text-center rounded-lg border-2 transition-colors ${
+              className={`p-3 text-center rounded-lg border-2 transition-colors ${
                 sidetoneRoute === "OutputOnly"
                   ? "bg-amber-500/20 border-amber-500"
                   : "bg-gray-800 border-gray-600 hover:border-gray-500"
               }`}
             >
-              <div className="text-sm font-medium">Vail speaker</div>
-              <div className="text-xs text-gray-400">No computer sound</div>
-            </button>
-            <button
-              onClick={() => onSidetoneRouteChange("LocalOnly")}
-              className={`p-2 text-center rounded-lg border-2 transition-colors ${
-                sidetoneRoute === "LocalOnly"
-                  ? "bg-amber-500/20 border-amber-500"
-                  : "bg-gray-800 border-gray-600 hover:border-gray-500"
-              }`}
-            >
-              <div className="text-sm font-medium">Computer</div>
-              <div className="text-xs text-gray-400">Speakers/headphones</div>
+              <div className="text-sm font-medium">Vail Adapter Only</div>
+              <div className="text-xs text-gray-400 mt-1">Built-in speaker</div>
             </button>
             <button
               onClick={() => onSidetoneRouteChange("Both")}
-              className={`p-2 text-center rounded-lg border-2 transition-colors ${
+              className={`p-3 text-center rounded-lg border-2 transition-colors ${
                 sidetoneRoute === "Both"
                   ? "bg-amber-500/20 border-amber-500"
                   : "bg-gray-800 border-gray-600 hover:border-gray-500"
               }`}
             >
-              <div className="text-sm font-medium">Both</div>
-              <div className="text-xs text-gray-400">Vail + computer</div>
+              <div className="text-sm font-medium">Adapter + Computer</div>
+              <div className="text-xs text-gray-400 mt-1">Both speakers</div>
             </button>
           </div>
+          {sidetoneRoute === "OutputOnly" && (
+            <InfoBox variant="info">
+              <p className="text-xs">
+                To disable the Vail adapter's built-in buzzer, turn the volume knob fully counter-clockwise until it clicks off.
+              </p>
+            </InfoBox>
+          )}
         </div>
 
         {/* Local output device - show if using local sidetone */}
-        {(sidetoneRoute === "LocalOnly" || sidetoneRoute === "Both") && (
+        {sidetoneRoute === "Both" && (
           <div className="space-y-1">
             <label className="block text-sm text-gray-300">Your speakers/headphones:</label>
             <BigSelect
               value={selectedLocalDevice || ""}
               onChange={(v) => onLocalDeviceChange(v || null)}
-              options={outputDevices.map((d) => ({
-                value: d.internal_name,
-                label: d.display_name,
-              }))}
+              options={outputDevices
+                .filter((d) => !d.internal_name.toLowerCase().includes("vailzoomer") && !d.display_name.toLowerCase().includes("vail zoomer"))
+                .map((d) => ({
+                  value: d.internal_name,
+                  label: d.display_name,
+                }))}
               placeholder="System Default"
             />
           </div>
@@ -203,11 +189,11 @@ export function Step3AudioSetup({
           <BigButton variant="secondary" onClick={onTestTone} className="!min-h-[40px] !py-2 !px-6 !text-sm">
             Test Tone
           </BigButton>
-          {sidetoneRoute === "OutputOnly" && (
-            <p className="text-xs text-gray-500 mt-1">
-              (Sound goes to Vail adapter speaker, not your computer)
-            </p>
-          )}
+          <p className="text-xs text-gray-500 mt-1">
+            {sidetoneRoute === "OutputOnly"
+              ? "(Sound plays on Vail adapter speaker only)"
+              : "(Sound plays on both adapter and computer speakers)"}
+          </p>
         </div>
 
       </div>

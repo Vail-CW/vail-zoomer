@@ -179,6 +179,22 @@ function App() {
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
 
+      // On Linux, check if VailZoomer exists - if not, mute mic to prevent echo
+      if (detectedOS === "linux") {
+        const vailZoomerExists = outputDeviceList.some(d =>
+          d.internal_name === "VailZoomer" ||
+          d.display_name.includes("VailZoomer") ||
+          d.display_name.includes("Vail Zoomer")
+        );
+
+        if (!vailZoomerExists && savedSettings.mic_volume > 0) {
+          // Mute mic until auto setup is done to prevent feedback echo
+          console.log("[audio] VailZoomer not found, muting mic to prevent echo");
+          await invoke("set_mic_volume", { volume: 0.0 });
+          updateSettings({ mic_volume: 0.0 });
+        }
+      }
+
       // Start audio engine with saved devices (including local sidetone device)
       try {
         await invoke("start_audio_with_all_devices", {
@@ -483,7 +499,49 @@ function App() {
   // Setup Linux virtual audio
   const setupLinuxAudio = async () => {
     await invoke("setup_linux_virtual_audio");
-    updateSettings({ linux_audio_setup_completed: true });
+
+    // Refresh device lists to include newly created VailZoomer devices
+    const [inputDeviceList, outputDeviceList] = await Promise.all([
+      invoke<DeviceInfo[]>("list_input_devices"),
+      invoke<DeviceInfo[]>("list_audio_devices"),
+    ]);
+    setInputDevices(inputDeviceList);
+    setOutputDevices(outputDeviceList);
+
+    // Auto-select VailZoomer as output device
+    const vailZoomerDevice = outputDeviceList.find(d =>
+      d.internal_name === "VailZoomer" ||
+      d.display_name.includes("VailZoomer") ||
+      d.display_name.includes("Vail Zoomer")
+    );
+
+    if (vailZoomerDevice) {
+      setSelectedOutputDevice(vailZoomerDevice.internal_name);
+
+      // Unmute mic now that VailZoomer is set up (prevents feedback echo)
+      const newMicVolume = settings.mic_volume === 0 ? 1.0 : settings.mic_volume;
+      await invoke("set_mic_volume", { volume: newMicVolume });
+
+      updateSettings({
+        linux_audio_setup_completed: true,
+        output_device: vailZoomerDevice.internal_name,
+        mic_volume: newMicVolume
+      });
+
+      // Restart audio with the new VailZoomer device to ensure proper initialization
+      try {
+        await invoke("stop_audio");
+        await invoke("start_audio_with_all_devices", {
+          outputDevice: vailZoomerDevice.internal_name,
+          inputDevice: selectedInputDevice,
+          localDevice: selectedLocalDevice,
+        });
+      } catch (err) {
+        console.error("Failed to restart audio after setup:", err);
+      }
+    } else {
+      updateSettings({ linux_audio_setup_completed: true });
+    }
   };
 
   // Render based on app mode

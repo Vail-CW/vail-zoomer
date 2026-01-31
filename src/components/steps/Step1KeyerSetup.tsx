@@ -93,12 +93,23 @@ export function Step1KeyerSetup({
 
   // Filter to show Vail adapter or similar devices
   const vailDevices = midiDevices.filter(d =>
-    d.toLowerCase().includes("vail") ||
+    (d.toLowerCase().includes("vail") ||
     d.toLowerCase().includes("xiao") ||
     d.toLowerCase().includes("seeed") ||
     d.toLowerCase().includes("samd21") ||
     d.toLowerCase().includes("qt py") ||
-    d.toLowerCase().includes("qtpy")
+    d.toLowerCase().includes("qtpy")) &&
+    // Exclude virtual/software MIDI devices
+    !d.toLowerCase().includes("vail zoomer output") &&
+    !d.toLowerCase().includes("vailzoomer")
+  );
+
+  // Filter out virtual/software MIDI devices from "other" list
+  const otherDevices = midiDevices.filter(d =>
+    !vailDevices.includes(d) &&
+    !d.toLowerCase().includes("midi through") &&
+    !d.toLowerCase().includes("vail zoomer output") &&
+    !d.toLowerCase().includes("vailzoomer")
   );
 
   return (
@@ -148,12 +159,12 @@ export function Step1KeyerSetup({
               </button>
             ))}
             {/* Show other MIDI devices */}
-            {midiDevices.filter(d => !vailDevices.includes(d)).length > 0 && (
+            {otherDevices.length > 0 && (
               <>
                 {vailDevices.length > 0 && (
                   <p className="text-xs text-gray-500 pt-2">Other MIDI devices:</p>
                 )}
-                {midiDevices.filter(d => !vailDevices.includes(d)).map((device) => (
+                {otherDevices.map((device) => (
                   <button
                     key={device}
                     onClick={() => onSelectMidiDevice(device)}
