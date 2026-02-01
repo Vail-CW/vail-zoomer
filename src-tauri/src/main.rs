@@ -230,9 +230,12 @@ fn set_mic_volume(state: tauri::State<AppState>, volume: f32) {
 
 #[tauri::command]
 fn key_down(state: tauri::State<AppState>, is_dit: bool) {
+    eprintln!("[cmd] key_down called (is_dit={})", is_dit);
     // Trigger sidetone
     if let Some(ref engine) = *state.audio_engine.lock() {
         engine.key_down();
+    } else {
+        eprintln!("[cmd] WARNING: No audio engine in key_down!");
     }
 
     // Feed to CW engine for decoding
@@ -242,6 +245,7 @@ fn key_down(state: tauri::State<AppState>, is_dit: bool) {
 
 #[tauri::command]
 fn key_up(state: tauri::State<AppState>) {
+    eprintln!("[cmd] key_up called");
     // Stop sidetone
     if let Some(ref engine) = *state.audio_engine.lock() {
         engine.key_up();
@@ -283,7 +287,7 @@ fn start_midi_event_loop(
             if let Some(event) = event {
                 match event {
                     MidiEvent::NoteOn { note, velocity } => {
-                        println!("MIDI Note On: note={}, velocity={}", note, velocity);
+                        eprintln!("[midi] *** NOTE ON: note={}, velocity={} ***", note, velocity);
 
                         // Determine if this is a dit or dah based on note
                         // Vail adapter sends note 1 for dit, note 2 for dah (in keyer modes)
@@ -293,6 +297,8 @@ fn start_midi_event_loop(
                         // Trigger sidetone
                         if let Some(ref engine) = *audio_engine.lock() {
                             engine.key_down();
+                        } else {
+                            eprintln!("[midi] WARNING: No audio engine available!");
                         }
 
                         // Feed to CW engine - key_down may return decoded chars (from gap)
@@ -305,7 +311,7 @@ fn start_midi_event_loop(
                         let _ = app_handle.emit("cw:key", KeyEvent { down: true });
                     }
                     MidiEvent::NoteOff { note } => {
-                        println!("MIDI Note Off: note={}", note);
+                        eprintln!("[midi] Note Off: note={}", note);
 
                         // Stop sidetone
                         if let Some(ref engine) = *audio_engine.lock() {
@@ -322,7 +328,7 @@ fn start_midi_event_loop(
                         let _ = app_handle.emit("cw:key", KeyEvent { down: false });
                     }
                     MidiEvent::ControlChange { controller, value } => {
-                        println!("MIDI CC: controller={}, value={}", controller, value);
+                        eprintln!("[midi] CC: controller={}, value={}", controller, value);
                     }
                 }
             }
@@ -366,6 +372,78 @@ fn is_linux_audio_setup_completed(state: tauri::State<AppState>) -> bool {
     state.settings.lock().linux_audio_setup_completed
 }
 
+// Test Recording Commands
+
+/// State returned for test recording progress
+#[derive(Clone, Serialize)]
+struct TestRecordingState {
+    is_recording: bool,
+    is_playing: bool,
+    samples_recorded: usize,
+    sample_rate: u32,
+    duration_seconds: f32,
+    playback_progress: f32,
+}
+
+#[tauri::command]
+fn start_test_recording(state: tauri::State<AppState>) -> Result<(), String> {
+    if let Some(ref engine) = *state.audio_engine.lock() {
+        engine.start_test_recording()
+    } else {
+        Err("Audio engine not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn stop_test_recording(state: tauri::State<AppState>) -> Result<(), String> {
+    if let Some(ref engine) = *state.audio_engine.lock() {
+        engine.stop_test_recording()
+    } else {
+        Err("Audio engine not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn play_test_recording(state: tauri::State<AppState>, local_device: Option<String>) -> Result<(), String> {
+    if let Some(ref engine) = *state.audio_engine.lock() {
+        engine.start_playback(local_device)
+    } else {
+        Err("Audio engine not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn stop_test_playback(state: tauri::State<AppState>) -> Result<(), String> {
+    if let Some(ref engine) = *state.audio_engine.lock() {
+        engine.stop_playback()
+    } else {
+        Err("Audio engine not initialized".to_string())
+    }
+}
+
+#[tauri::command]
+fn get_test_recording_state(state: tauri::State<AppState>) -> TestRecordingState {
+    if let Some(ref engine) = *state.audio_engine.lock() {
+        TestRecordingState {
+            is_recording: engine.is_recording(),
+            is_playing: engine.is_playing(),
+            samples_recorded: engine.get_recording_samples(),
+            sample_rate: engine.get_sample_rate(),
+            duration_seconds: engine.get_recording_duration(),
+            playback_progress: engine.get_playback_progress(),
+        }
+    } else {
+        TestRecordingState {
+            is_recording: false,
+            is_playing: false,
+            samples_recorded: 0,
+            sample_rate: 48000,
+            duration_seconds: 0.0,
+            playback_progress: 0.0,
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -400,6 +478,16 @@ fn main() {
 
             Ok(())
         })
+        .on_window_event(|_window, event| {
+            // Clean up Linux virtual audio devices when the app closes
+            if let tauri::WindowEvent::Destroyed = event {
+                #[cfg(target_os = "linux")]
+                {
+                    eprintln!("[app] Window destroyed, cleaning up virtual audio devices...");
+                    let _ = linux_audio_setup::cleanup_virtual_audio_devices();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_settings,
             update_settings,
@@ -420,6 +508,11 @@ fn main() {
             setup_linux_virtual_audio,
             mark_linux_audio_setup_complete,
             is_linux_audio_setup_completed,
+            start_test_recording,
+            stop_test_recording,
+            play_test_recording,
+            stop_test_playback,
+            get_test_recording_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

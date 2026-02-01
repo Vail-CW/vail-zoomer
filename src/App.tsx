@@ -47,6 +47,13 @@ interface VirtualAudioStatus {
   pactl_installed: boolean;
 }
 
+interface SetupResult {
+  success: boolean;
+  message: string;
+  log: string[];
+  devices_created: string[];
+}
+
 type OSType = "windows" | "macos" | "linux";
 type WizardStep = 1 | 2 | 3 | 4;
 type AppMode = "wizard" | "main" | "video-tips";
@@ -83,11 +90,22 @@ function App() {
   // Linux virtual audio setup state (kept for future use)
   const [_showLinuxAudioBanner, setShowLinuxAudioBanner] = useState(false);
   const [_linuxAudioStatus, setLinuxAudioStatus] = useState<VirtualAudioStatus | null>(null);
+  const [linuxSetupLog, setLinuxSetupLog] = useState<string[]>([]);
+  const [linuxSetupInProgress, setLinuxSetupInProgress] = useState(false);
+  const [linuxSetupError, setLinuxSetupError] = useState<string | null>(null);
+  const [linuxSetupComplete, setLinuxSetupComplete] = useState(false);
 
   // Update state
   const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string>("");
+
+  // Test recording state
+  type TestRecordingState = "idle" | "recording" | "playing";
+  const [testRecordingState, setTestRecordingState] = useState<TestRecordingState>("idle");
+  const [testRecordingCountdown, setTestRecordingCountdown] = useState(5);
+  const [testPlaybackProgress, setTestPlaybackProgress] = useState(0);
+  const testRecordingIntervalRef = useRef<number | null>(null);
 
   // Settings state
   const [settings, setSettings] = useState<Settings>({
@@ -113,18 +131,34 @@ function App() {
   // Ref to track current settings synchronously (React state is async)
   const settingsRef = useRef<Settings>(settings);
 
-  // Ref to track test tone timeout (for cancellation)
-  const testToneTimeoutRef = useRef<number | null>(null);
 
   // Ref to track the user's saved mic volume (for restoring after wizard mute)
   const savedMicVolumeRef = useRef<number>(1.0);
 
   // Check if wizard was completed for this version
+  // On Linux, always show wizard since virtual audio devices are created fresh each startup
   useEffect(() => {
-    const completed = localStorage.getItem(WIZARD_COMPLETE_KEY) === "true";
-    if (completed) {
-      setAppMode("main");
-    }
+    const checkWizardCompletion = async () => {
+      const completed = localStorage.getItem(WIZARD_COMPLETE_KEY) === "true";
+      if (!completed) return;
+
+      // On Linux, always go through wizard (devices are ephemeral)
+      // On other platforms, skip to main if wizard was completed
+      try {
+        const os = await platform();
+        if (os === "linux") {
+          // Stay in wizard mode at step 1
+          return;
+        }
+        // Not Linux, safe to skip wizard
+        setAppMode("main");
+      } catch {
+        // On error, default to skipping wizard if it was completed
+        setAppMode("main");
+      }
+    };
+
+    checkWizardCompletion();
   }, []);
 
   // Initialize on mount
@@ -180,6 +214,7 @@ function App() {
       setOutputDevices(outputDeviceList);
 
       // On Linux, check if VailZoomer exists - if not, mute mic to prevent echo
+      // Also reset any stale VailZoomer settings since devices are cleaned up on exit
       if (detectedOS === "linux") {
         const vailZoomerExists = outputDeviceList.some(d =>
           d.internal_name === "VailZoomer" ||
@@ -187,11 +222,28 @@ function App() {
           d.display_name.includes("Vail Zoomer")
         );
 
-        if (!vailZoomerExists && savedSettings.mic_volume > 0) {
-          // Mute mic until auto setup is done to prevent feedback echo
-          console.log("[audio] VailZoomer not found, muting mic to prevent echo");
-          await invoke("set_mic_volume", { volume: 0.0 });
-          updateSettings({ mic_volume: 0.0 });
+        // Reset linux_audio_setup_completed since devices are cleaned up on exit
+        // Also clear any stale VailZoomer device references
+        if (!vailZoomerExists) {
+          const outputWasVailZoomer = savedSettings.output_device?.toLowerCase().includes("vailzoomer");
+          if (savedSettings.linux_audio_setup_completed || outputWasVailZoomer) {
+            console.log("[audio] VailZoomer not found, resetting Linux audio settings");
+            savedSettings.linux_audio_setup_completed = false;
+            if (outputWasVailZoomer) {
+              savedSettings.output_device = null;
+            }
+            updateSettings({
+              linux_audio_setup_completed: false,
+              output_device: outputWasVailZoomer ? null : savedSettings.output_device,
+            });
+          }
+
+          if (savedSettings.mic_volume > 0) {
+            // Mute mic until auto setup is done to prevent feedback echo
+            console.log("[audio] VailZoomer not found, muting mic to prevent echo");
+            await invoke("set_mic_volume", { volume: 0.0 });
+            updateSettings({ mic_volume: 0.0 });
+          }
         }
       }
 
@@ -217,11 +269,12 @@ function App() {
       }
 
       // Check for Linux virtual audio device (Linux only)
+      // Show banner if devices don't exist (regardless of saved settings)
       if (detectedOS === "linux") {
         try {
           const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
           setLinuxAudioStatus(status);
-          if (!status.exists && !savedSettings.linux_audio_setup_completed) {
+          if (!status.exists) {
             setShowLinuxAudioBanner(true);
           }
         } catch (err) {
@@ -340,6 +393,98 @@ function App() {
 
   const clearText = () => setCwText("");
 
+  // Test recording handlers
+  const startTestRecording = async () => {
+    try {
+      await invoke("start_test_recording");
+      setTestRecordingState("recording");
+      setTestRecordingCountdown(5);
+
+      // Start countdown
+      testRecordingIntervalRef.current = window.setInterval(async () => {
+        setTestRecordingCountdown((prev) => {
+          if (prev <= 1) {
+            // Stop recording when countdown reaches 0
+            stopTestRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to start test recording:", err);
+    }
+  };
+
+  const stopTestRecording = async () => {
+    // Clear the countdown interval
+    if (testRecordingIntervalRef.current) {
+      clearInterval(testRecordingIntervalRef.current);
+      testRecordingIntervalRef.current = null;
+    }
+
+    try {
+      await invoke("stop_test_recording");
+      // Automatically start playback
+      await playTestRecording();
+    } catch (err) {
+      console.error("Failed to stop test recording:", err);
+      setTestRecordingState("idle");
+    }
+  };
+
+  const playTestRecording = async () => {
+    try {
+      await invoke("play_test_recording", { localDevice: selectedLocalDevice });
+      setTestRecordingState("playing");
+      setTestPlaybackProgress(0);
+
+      // Poll for playback progress
+      testRecordingIntervalRef.current = window.setInterval(async () => {
+        try {
+          const state = await invoke<{
+            is_recording: boolean;
+            is_playing: boolean;
+            samples_recorded: number;
+            sample_rate: number;
+            duration_seconds: number;
+            playback_progress: number;
+          }>("get_test_recording_state");
+
+          setTestPlaybackProgress(state.playback_progress);
+
+          if (!state.is_playing) {
+            // Playback finished
+            if (testRecordingIntervalRef.current) {
+              clearInterval(testRecordingIntervalRef.current);
+              testRecordingIntervalRef.current = null;
+            }
+            setTestRecordingState("idle");
+          }
+        } catch (err) {
+          console.error("Failed to get test recording state:", err);
+        }
+      }, 100);
+    } catch (err) {
+      console.error("Failed to play test recording:", err);
+      setTestRecordingState("idle");
+    }
+  };
+
+  const stopTestPlayback = async () => {
+    if (testRecordingIntervalRef.current) {
+      clearInterval(testRecordingIntervalRef.current);
+      testRecordingIntervalRef.current = null;
+    }
+
+    try {
+      await invoke("stop_test_playback");
+    } catch (err) {
+      console.error("Failed to stop test playback:", err);
+    }
+    setTestRecordingState("idle");
+  };
+
   // Restart audio with selected devices and save to settings
   const restartAudio = async (
     outputDevice: string | null,
@@ -376,52 +521,6 @@ function App() {
     } catch (err) {
       console.error("Failed to update settings:", err);
     }
-  };
-
-  // Test function to manually trigger sidetone
-  // Temporarily switches to "Both" routing if needed so user can hear the tone
-  const testTone = async (isDit: boolean) => {
-    // Cancel any pending timeout from previous test tone
-    if (testToneTimeoutRef.current !== null) {
-      clearTimeout(testToneTimeoutRef.current);
-      testToneTimeoutRef.current = null;
-    }
-
-    const originalRoute = settings.sidetone_route;
-    const needsLocalAudio = originalRoute === "OutputOnly";
-
-    // Temporarily enable local audio if only outputting to Zoom
-    if (needsLocalAudio) {
-      await invoke("update_settings", {
-        settings: { ...settings, sidetone_route: "Both" }
-      });
-      // Restart audio to create the local stream (route changes don't take effect otherwise)
-      await invoke("stop_audio");
-      await invoke("start_audio_with_all_devices", {
-        outputDevice: selectedOutputDevice,
-        inputDevice: selectedInputDevice,
-        localDevice: selectedLocalDevice,
-      });
-    }
-
-    await invoke("key_down", { isDit });
-    testToneTimeoutRef.current = window.setTimeout(async () => {
-      testToneTimeoutRef.current = null;
-      await invoke("key_up");
-      // Restore original setting after tone finishes
-      if (needsLocalAudio) {
-        await invoke("update_settings", {
-          settings: { ...settings, sidetone_route: originalRoute }
-        });
-        // Restart audio to apply the route change
-        await invoke("stop_audio");
-        await invoke("start_audio_with_all_devices", {
-          outputDevice: selectedOutputDevice,
-          inputDevice: selectedInputDevice,
-          localDevice: selectedLocalDevice,
-        });
-      }
-    }, isDit ? 100 : 300);
   };
 
   // Complete the wizard
@@ -498,49 +597,77 @@ function App() {
 
   // Setup Linux virtual audio
   const setupLinuxAudio = async () => {
-    await invoke("setup_linux_virtual_audio");
+    setLinuxSetupInProgress(true);
+    setLinuxSetupError(null);
+    setLinuxSetupLog(["Starting virtual audio setup..."]);
 
-    // Refresh device lists to include newly created VailZoomer devices
-    const [inputDeviceList, outputDeviceList] = await Promise.all([
-      invoke<DeviceInfo[]>("list_input_devices"),
-      invoke<DeviceInfo[]>("list_audio_devices"),
-    ]);
-    setInputDevices(inputDeviceList);
-    setOutputDevices(outputDeviceList);
+    try {
+      // Run the setup and get verbose result
+      const result = await invoke<SetupResult>("setup_linux_virtual_audio");
+      setLinuxSetupLog(result.log);
 
-    // Auto-select VailZoomer as output device
-    const vailZoomerDevice = outputDeviceList.find(d =>
-      d.internal_name === "VailZoomer" ||
-      d.display_name.includes("VailZoomer") ||
-      d.display_name.includes("Vail Zoomer")
-    );
-
-    if (vailZoomerDevice) {
-      setSelectedOutputDevice(vailZoomerDevice.internal_name);
-
-      // Unmute mic now that VailZoomer is set up (prevents feedback echo)
-      const newMicVolume = settings.mic_volume === 0 ? 1.0 : settings.mic_volume;
-      await invoke("set_mic_volume", { volume: newMicVolume });
-
-      updateSettings({
-        linux_audio_setup_completed: true,
-        output_device: vailZoomerDevice.internal_name,
-        mic_volume: newMicVolume
-      });
-
-      // Restart audio with the new VailZoomer device to ensure proper initialization
-      try {
-        await invoke("stop_audio");
-        await invoke("start_audio_with_all_devices", {
-          outputDevice: vailZoomerDevice.internal_name,
-          inputDevice: selectedInputDevice,
-          localDevice: selectedLocalDevice,
-        });
-      } catch (err) {
-        console.error("Failed to restart audio after setup:", err);
+      if (!result.success) {
+        setLinuxSetupError(result.message);
+        return;
       }
-    } else {
-      updateSettings({ linux_audio_setup_completed: true });
+
+      // Refresh device lists to include newly created VailZoomer devices
+      setLinuxSetupLog(prev => [...prev, "Refreshing device lists..."]);
+      const [inputDeviceList, outputDeviceList] = await Promise.all([
+        invoke<DeviceInfo[]>("list_input_devices"),
+        invoke<DeviceInfo[]>("list_audio_devices"),
+      ]);
+      setInputDevices(inputDeviceList);
+      setOutputDevices(outputDeviceList);
+
+      // Auto-select VailZoomer as output device
+      const vailZoomerDevice = outputDeviceList.find(d =>
+        d.internal_name === "VailZoomer" ||
+        d.display_name.includes("VailZoomer") ||
+        d.display_name.includes("Vail Zoomer")
+      );
+
+      if (vailZoomerDevice) {
+        setLinuxSetupLog(prev => [...prev, `✓ Found VailZoomer device: ${vailZoomerDevice.display_name}`]);
+        setSelectedOutputDevice(vailZoomerDevice.internal_name);
+
+        // Unmute mic now that VailZoomer is set up (prevents feedback echo)
+        const newMicVolume = settings.mic_volume === 0 ? 1.0 : settings.mic_volume;
+        await invoke("set_mic_volume", { volume: newMicVolume });
+
+        updateSettings({
+          linux_audio_setup_completed: true,
+          output_device: vailZoomerDevice.internal_name,
+          mic_volume: newMicVolume
+        });
+
+        // Restart audio with the new VailZoomer device to ensure proper initialization
+        setLinuxSetupLog(prev => [...prev, "Initializing audio routing..."]);
+        try {
+          await invoke("stop_audio");
+          await invoke("start_audio_with_all_devices", {
+            outputDevice: vailZoomerDevice.internal_name,
+            inputDevice: selectedInputDevice,
+            localDevice: selectedLocalDevice,
+          });
+          setLinuxSetupLog(prev => [...prev, "✓ Audio routing active"]);
+        } catch (err) {
+          console.error("Failed to restart audio after setup:", err);
+          setLinuxSetupLog(prev => [...prev, `Warning: Audio restart failed: ${err}`]);
+        }
+      } else {
+        setLinuxSetupLog(prev => [...prev, "Warning: VailZoomer device not found in device list"]);
+        updateSettings({ linux_audio_setup_completed: true });
+      }
+
+      setLinuxSetupComplete(true);
+      setLinuxSetupLog(prev => [...prev, "", "Setup complete! Virtual audio is ready."]);
+    } catch (err) {
+      const errorMsg = String(err);
+      setLinuxSetupError(errorMsg);
+      setLinuxSetupLog(prev => [...prev, `✗ Error: ${errorMsg}`]);
+    } finally {
+      setLinuxSetupInProgress(false);
     }
   };
 
@@ -558,19 +685,10 @@ function App() {
             sidetoneFrequency={settings.sidetone_frequency}
             midiConnected={midiConnected}
             isKeyDown={isKeyDown}
-            outputDevices={outputDevices}
-            selectedLocalDevice={selectedLocalDevice}
             onSelectMidiDevice={connectMidi}
             onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
             onWpmChange={(wpm) => updateSettings({ wpm })}
             onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}
-            onLocalDeviceChange={(device) => {
-              setSelectedLocalDevice(device);
-              updateSettings({ local_output_device: device });
-              restartAudio(selectedOutputDevice, selectedInputDevice, device);
-            }}
-            onTestDit={() => testTone(true)}
-            onTestDah={() => testTone(false)}
             onNext={() => setWizardStep(2)}
           />
         )}
@@ -580,6 +698,10 @@ function App() {
             onBack={() => setWizardStep(1)}
             onNext={() => setWizardStep(3)}
             onSetupLinuxAudio={currentOS === "linux" ? setupLinuxAudio : undefined}
+            linuxSetupInProgress={linuxSetupInProgress}
+            linuxSetupComplete={linuxSetupComplete}
+            linuxSetupError={linuxSetupError}
+            linuxSetupLog={linuxSetupLog}
           />
         )}
         {wizardStep === 3 && (
@@ -601,11 +723,37 @@ function App() {
               restartAudio(selectedOutputDevice, selectedInputDevice, device);
             }}
             onSidetoneRouteChange={async (route) => {
+              console.log("[Step3] Sidetone route changing to:", route);
+              console.log("[Step3] Current selectedLocalDevice:", selectedLocalDevice);
+              console.log("[Step3] Current selectedOutputDevice:", selectedOutputDevice);
+              console.log("[Step3] Current selectedInputDevice:", selectedInputDevice);
+
               await updateSettings({ sidetone_route: route });
-              restartAudio(selectedOutputDevice, selectedInputDevice, selectedLocalDevice);
+
+              // When switching to "Both", auto-select first non-VailZoomer output device as local
+              let localDev = selectedLocalDevice;
+              if (route === "Both" && !selectedLocalDevice) {
+                console.log("[Step3] No local device selected, auto-selecting first non-VailZoomer device");
+                console.log("[Step3] Available output devices:", outputDevices.map(d => d.internal_name));
+                const firstLocalDevice = outputDevices.find(d =>
+                  !d.internal_name.toLowerCase().includes("vailzoomer") &&
+                  !d.display_name.toLowerCase().includes("vail zoomer")
+                );
+                if (firstLocalDevice) {
+                  localDev = firstLocalDevice.internal_name;
+                  console.log("[Step3] Auto-selected local device:", localDev);
+                  setSelectedLocalDevice(localDev);
+                  await updateSettings({ local_output_device: localDev });
+                } else {
+                  console.log("[Step3] WARNING: No non-VailZoomer output device found!");
+                }
+              }
+
+              console.log("[Step3] Restarting audio with localDev:", localDev);
+              await restartAudio(selectedOutputDevice, selectedInputDevice, localDev);
+              console.log("[Step3] Audio restart complete");
             }}
             onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
-            onTestTone={() => testTone(true)}
             onBack={() => setWizardStep(2)}
             onNext={() => setWizardStep(4)}
           />
@@ -652,21 +800,12 @@ function App() {
         micVolume={settings.mic_volume}
         micDucking={settings.mic_ducking}
         outputLevel={outputLevel}
-        outputDevices={outputDevices}
-        selectedLocalDevice={selectedLocalDevice}
-        onLocalDeviceChange={(device) => {
-          setSelectedLocalDevice(device);
-          updateSettings({ local_output_device: device });
-          restartAudio(selectedOutputDevice, selectedInputDevice, device);
-        }}
         onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
         onWpmChange={(wpm) => updateSettings({ wpm })}
         onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}
         onSidetoneVolumeChange={(vol) => updateSettings({ sidetone_volume: vol })}
         onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
         onMicDuckingChange={(enabled) => updateSettings({ mic_ducking: enabled })}
-        onTestDit={() => testTone(true)}
-        onTestDah={() => testTone(false)}
         onOpenVideoTips={() => setAppMode("video-tips")}
         onOpenSettings={() => {
           // Reset wizard completion to re-run setup
@@ -675,6 +814,12 @@ function App() {
           setAppMode("wizard");
         }}
         onOpenHelp={() => setShowHelp(true)}
+        testRecordingState={testRecordingState}
+        testRecordingCountdown={testRecordingCountdown}
+        testPlaybackProgress={testPlaybackProgress}
+        onStartTestRecording={startTestRecording}
+        onStopTestRecording={stopTestRecording}
+        onStopTestPlayback={stopTestPlayback}
       />
 
       {/* Help Modal - reuse existing help content or create new */}

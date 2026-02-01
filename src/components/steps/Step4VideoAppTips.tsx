@@ -21,7 +21,7 @@ export function Step4VideoAppTips({
       case "macos":
         return "BlackHole 2ch";
       case "linux":
-        return "VailZoomer Mic";
+        return "vailzoomer";
       default:
         return "CABLE Output";
     }

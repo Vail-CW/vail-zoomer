@@ -1,11 +1,7 @@
 import { useState } from "react";
-import { BigButton } from "../shared/BigButton";
 import { BigSelect } from "../shared/BigSelect";
 
-interface DeviceInfo {
-  display_name: string;
-  internal_name: string;
-}
+type TestRecordingState = "idle" | "recording" | "playing";
 
 const KEYER_TYPES = [
   { value: "Straight", label: "Straight Key", description: "One paddle, you control all timing" },
@@ -39,11 +35,6 @@ interface OperationalViewProps {
   micDucking: boolean;
   outputLevel: number;
 
-  // Local device for sidetone output
-  outputDevices: DeviceInfo[];
-  selectedLocalDevice: string | null;
-  onLocalDeviceChange: (device: string | null) => void;
-
   // Handlers
   onKeyerTypeChange: (type: string) => void;
   onWpmChange: (wpm: number) => void;
@@ -51,11 +42,17 @@ interface OperationalViewProps {
   onSidetoneVolumeChange: (vol: number) => void;
   onMicVolumeChange: (vol: number) => void;
   onMicDuckingChange: (enabled: boolean) => void;
-  onTestDit: () => void;
-  onTestDah: () => void;
   onOpenVideoTips: () => void;
   onOpenSettings: () => void;
   onOpenHelp: () => void;
+
+  // Test recording
+  testRecordingState: TestRecordingState;
+  testRecordingCountdown: number;
+  testPlaybackProgress: number;
+  onStartTestRecording: () => void;
+  onStopTestRecording: () => void;
+  onStopTestPlayback: () => void;
 }
 
 export function OperationalView({
@@ -72,20 +69,21 @@ export function OperationalView({
   micVolume,
   micDucking,
   outputLevel,
-  outputDevices,
-  selectedLocalDevice,
-  onLocalDeviceChange,
   onKeyerTypeChange,
   onWpmChange,
   onSidetoneFrequencyChange,
   onSidetoneVolumeChange,
   onMicVolumeChange,
   onMicDuckingChange,
-  onTestDit,
-  onTestDah,
   onOpenVideoTips,
   onOpenSettings,
   onOpenHelp,
+  testRecordingState,
+  testRecordingCountdown,
+  testPlaybackProgress,
+  onStartTestRecording,
+  onStopTestRecording,
+  onStopTestPlayback,
 }: OperationalViewProps) {
   const [showDecoder, setShowDecoder] = useState(true);
 
@@ -146,8 +144,8 @@ export function OperationalView({
         </div>
       </div>
 
-      {/* Output level meter - what's going to Zoom */}
-      <div className="p-4 bg-gray-800 rounded-xl mb-4">
+      {/* Output level meter and test recording - what's going to Zoom */}
+      <div className="p-4 bg-gray-800 rounded-xl mb-4 space-y-3">
         <div className="flex items-center gap-3">
           <span className="text-gray-400 text-sm whitespace-nowrap">To Zoom:</span>
           <div className="flex-1 h-4 bg-gray-700 rounded-full overflow-hidden">
@@ -161,6 +159,72 @@ export function OperationalView({
           <span className="text-gray-400 text-sm w-12 text-right">
             {Math.round(outputLevel * 100)}%
           </span>
+        </div>
+
+        {/* Test Recording */}
+        <div className="flex items-center gap-3">
+          {testRecordingState === "idle" && (
+            <button
+              onClick={onStartTestRecording}
+              disabled={!audioStarted}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
+            >
+              <svg className="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="8" />
+              </svg>
+              Test Recording
+            </button>
+          )}
+
+          {testRecordingState === "recording" && (
+            <>
+              <div className="flex items-center gap-2 px-4 py-2 bg-red-900/50 border border-red-700 rounded-lg">
+                <svg className="w-4 h-4 text-red-400 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="8" />
+                </svg>
+                <span className="text-red-300 font-medium">
+                  Recording... {testRecordingCountdown}
+                </span>
+              </div>
+              <button
+                onClick={onStopTestRecording}
+                className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+              >
+                Stop
+              </button>
+            </>
+          )}
+
+          {testRecordingState === "playing" && (
+            <>
+              <div className="flex-1 flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  <span className="text-green-300 text-sm">Playing...</span>
+                </div>
+                <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-green-500 transition-all duration-100"
+                    style={{ width: `${testPlaybackProgress * 100}%` }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={onStopTestPlayback}
+                className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+              >
+                Stop
+              </button>
+            </>
+          )}
+
+          {testRecordingState === "idle" && (
+            <span className="text-gray-500 text-xs">
+              Record 5 seconds of mic + CW to test your setup
+            </span>
+          )}
         </div>
       </div>
 
@@ -264,20 +328,6 @@ export function OperationalView({
           </p>
         </div>
 
-        {/* Sidetone output device selector */}
-        <div>
-          <label className="block text-lg text-gray-300 mb-2">Sidetone Output</label>
-          <BigSelect
-            value={selectedLocalDevice || ""}
-            onChange={(v) => onLocalDeviceChange(v || null)}
-            options={outputDevices.map((d) => ({
-              value: d.internal_name,
-              label: d.display_name,
-            }))}
-            placeholder="System Default"
-          />
-        </div>
-
         {/* Mic volume slider */}
         <div>
           <label className="flex justify-between items-center text-lg text-gray-300 mb-2">
@@ -315,16 +365,6 @@ export function OperationalView({
             />
           </button>
         </div>
-      </div>
-
-      {/* Test buttons */}
-      <div className="flex gap-4 justify-center mb-4">
-        <BigButton variant="secondary" onClick={onTestDit}>
-          Test Dit
-        </BigButton>
-        <BigButton variant="secondary" onClick={onTestDah}>
-          Test Dah
-        </BigButton>
       </div>
 
       {/* Video App Tips button */}

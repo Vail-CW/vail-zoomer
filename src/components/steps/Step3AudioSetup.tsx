@@ -1,6 +1,5 @@
 import { WizardLayout } from "../wizard/WizardLayout";
 import { BigSelect } from "../shared/BigSelect";
-import { BigButton } from "../shared/BigButton";
 import { InfoBox } from "../shared/InfoBox";
 
 interface DeviceInfo {
@@ -23,7 +22,6 @@ interface Step3AudioSetupProps {
   onLocalDeviceChange: (device: string | null) => void;
   onSidetoneRouteChange: (route: string) => void;
   onMicVolumeChange: (vol: number) => void;
-  onTestTone: () => void;
   onBack: () => void;
   onNext: () => void;
 }
@@ -41,7 +39,6 @@ export function Step3AudioSetup({
   onLocalDeviceChange,
   onSidetoneRouteChange,
   onMicVolumeChange,
-  onTestTone,
   onBack,
   onNext,
 }: Step3AudioSetupProps) {
@@ -160,7 +157,7 @@ export function Step3AudioSetup({
           {sidetoneRoute === "OutputOnly" && (
             <InfoBox variant="info">
               <p className="text-xs">
-                To disable the Vail adapter's built-in buzzer, turn the volume knob fully counter-clockwise until it clicks off.
+                To mute the Vail adapter's built-in speaker, hold the dit paddle down for 10 seconds. Power cycle the adapter to restore it.
               </p>
             </InfoBox>
           )}
@@ -183,18 +180,6 @@ export function Step3AudioSetup({
             />
           </div>
         )}
-
-        {/* Test button */}
-        <div className="text-center pt-1">
-          <BigButton variant="secondary" onClick={onTestTone} className="!min-h-[40px] !py-2 !px-6 !text-sm">
-            Test Tone
-          </BigButton>
-          <p className="text-xs text-gray-500 mt-1">
-            {sidetoneRoute === "OutputOnly"
-              ? "(Sound plays on Vail adapter speaker only)"
-              : "(Sound plays on both adapter and computer speakers)"}
-          </p>
-        </div>
 
       </div>
     </WizardLayout>

@@ -1,14 +1,7 @@
-import { useState } from "react";
 import { WizardLayout } from "../wizard/WizardLayout";
 import { BigSelect } from "../shared/BigSelect";
-import { BigButton } from "../shared/BigButton";
 import { InfoBox } from "../shared/InfoBox";
 import { CollapsibleSection } from "../shared/CollapsibleSection";
-
-interface DeviceInfo {
-  display_name: string;
-  internal_name: string;
-}
 
 const KEYER_TYPES = [
   { value: "Straight", label: "Straight Key", description: "One paddle, you control all timing" },
@@ -30,15 +23,10 @@ interface Step1KeyerSetupProps {
   sidetoneFrequency: number;
   midiConnected: boolean;
   isKeyDown: boolean;
-  outputDevices: DeviceInfo[];
-  selectedLocalDevice: string | null;
   onSelectMidiDevice: (device: string) => void;
   onKeyerTypeChange: (type: string) => void;
   onWpmChange: (wpm: number) => void;
   onSidetoneFrequencyChange: (freq: number) => void;
-  onLocalDeviceChange: (device: string | null) => void;
-  onTestDit: () => void;
-  onTestDah: () => void;
   onNext: () => void;
 }
 
@@ -50,47 +38,12 @@ export function Step1KeyerSetup({
   sidetoneFrequency,
   midiConnected,
   isKeyDown,
-  outputDevices,
-  selectedLocalDevice,
   onSelectMidiDevice,
   onKeyerTypeChange,
   onWpmChange,
   onSidetoneFrequencyChange,
-  onLocalDeviceChange,
-  onTestDit,
-  onTestDah,
   onNext,
 }: Step1KeyerSetupProps) {
-  // Sidetone confirmation state - only ask once after first test
-  const [showSidetoneConfirmation, setShowSidetoneConfirmation] = useState(false);
-  const [hasConfirmedSidetone, setHasConfirmedSidetone] = useState(false);
-  const [showDeviceSelector, setShowDeviceSelector] = useState(false);
-
-  // Handle test button click - show confirmation on first test
-  const handleTestTone = (isDit: boolean) => {
-    if (isDit) {
-      onTestDit();
-    } else {
-      onTestDah();
-    }
-    // Show confirmation prompt only if we haven't confirmed yet
-    if (!hasConfirmedSidetone) {
-      setShowSidetoneConfirmation(true);
-    }
-  };
-
-  // User confirmed they heard the tone
-  const handleHeardTone = () => {
-    setShowSidetoneConfirmation(false);
-    setHasConfirmedSidetone(true);
-    setShowDeviceSelector(false);
-  };
-
-  // User didn't hear the tone - show device selector
-  const handleDidntHearTone = () => {
-    setShowDeviceSelector(true);
-  };
-
   // Filter to show Vail adapter or similar devices
   const vailDevices = midiDevices.filter(d =>
     (d.toLowerCase().includes("vail") ||
@@ -227,61 +180,6 @@ export function Step1KeyerSetup({
             </p>
           </div>
         )}
-
-        {/* Test buttons */}
-        <div className="space-y-2">
-          <div className="flex gap-3 justify-center">
-            <BigButton variant="secondary" onClick={() => handleTestTone(true)} className="!min-h-[48px] !py-2 !px-6 !text-base">
-              Test Dit
-            </BigButton>
-            <BigButton variant="secondary" onClick={() => handleTestTone(false)} className="!min-h-[48px] !py-2 !px-6 !text-base">
-              Test Dah
-            </BigButton>
-          </div>
-          <p className="text-center text-gray-500 text-sm">
-            Click to hear a test tone
-          </p>
-
-          {/* Sidetone confirmation prompt */}
-          {showSidetoneConfirmation && (
-            <div className="mt-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
-              {!showDeviceSelector ? (
-                <>
-                  <p className="text-center text-gray-200 mb-3">Did you hear the tone?</p>
-                  <div className="flex gap-3 justify-center">
-                    <BigButton variant="success" onClick={handleHeardTone} className="!min-h-[40px] !py-2 !px-4 !text-sm">
-                      Yes, I heard it
-                    </BigButton>
-                    <BigButton variant="secondary" onClick={handleDidntHearTone} className="!min-h-[40px] !py-2 !px-4 !text-sm">
-                      No, I didn't
-                    </BigButton>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-center text-gray-200 mb-3">Select your headphones or speakers:</p>
-                  <BigSelect
-                    value={selectedLocalDevice || ""}
-                    onChange={(v) => onLocalDeviceChange(v || null)}
-                    options={outputDevices.map((d) => ({
-                      value: d.internal_name,
-                      label: d.display_name,
-                    }))}
-                    placeholder="System Default"
-                  />
-                  <div className="flex gap-3 justify-center mt-3">
-                    <BigButton variant="secondary" onClick={() => handleTestTone(true)} className="!min-h-[40px] !py-2 !px-4 !text-sm">
-                      Try Again
-                    </BigButton>
-                    <BigButton variant="success" onClick={handleHeardTone} className="!min-h-[40px] !py-2 !px-4 !text-sm">
-                      I hear it now
-                    </BigButton>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
 
         {/* Keyer type selection */}
         <div className="space-y-2">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import { WizardLayout } from "../wizard/WizardLayout";
 import { InfoBox } from "../shared/InfoBox";
 import { BigButton } from "../shared/BigButton";
@@ -8,6 +8,11 @@ interface Step2VirtualAudioProps {
   onBack: () => void;
   onNext: () => void;
   onSetupLinuxAudio?: () => Promise<void>;
+  // Linux setup state (managed by parent)
+  linuxSetupInProgress?: boolean;
+  linuxSetupComplete?: boolean;
+  linuxSetupError?: string | null;
+  linuxSetupLog?: string[];
 }
 
 export function Step2VirtualAudio({
@@ -15,24 +20,26 @@ export function Step2VirtualAudio({
   onBack,
   onNext,
   onSetupLinuxAudio,
+  linuxSetupInProgress = false,
+  linuxSetupComplete = false,
+  linuxSetupError = null,
+  linuxSetupLog = [],
 }: Step2VirtualAudioProps) {
-  const [isSettingUp, setIsSettingUp] = useState(false);
-  const [setupComplete, setSetupComplete] = useState(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
+  const hasAutoStarted = useRef(false);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
-  const handleLinuxSetup = async () => {
-    if (!onSetupLinuxAudio) return;
-    setIsSettingUp(true);
-    setSetupError(null);
-    try {
-      await onSetupLinuxAudio();
-      setSetupComplete(true);
-    } catch (err) {
-      setSetupError(String(err));
-    } finally {
-      setIsSettingUp(false);
+  // Auto-run setup on Linux when component mounts
+  useEffect(() => {
+    if (currentOS === "linux" && onSetupLinuxAudio && !hasAutoStarted.current && !linuxSetupComplete) {
+      hasAutoStarted.current = true;
+      onSetupLinuxAudio();
     }
-  };
+  }, [currentOS, onSetupLinuxAudio, linuxSetupComplete]);
+
+  // Auto-scroll log to bottom
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [linuxSetupLog]);
 
   return (
     <WizardLayout
@@ -114,42 +121,105 @@ export function Step2VirtualAudio({
 
         {currentOS === "linux" && (
           <div className="space-y-3">
-            <div className="bg-gray-800 rounded-xl p-4 space-y-3">
-              <h3 className="text-lg font-semibold text-amber-400">Setup Virtual Audio Device</h3>
-              <p className="text-sm text-gray-300">
-                Vail Zoomer can automatically create a virtual audio device using PipeWire or PulseAudio.
+            <InfoBox variant="warning">
+              <p className="text-sm">
+                <strong>Note:</strong> Virtual audio devices are created fresh each time you start Vail Zoomer.
+                This is normal and ensures clean audio routing.
               </p>
+            </InfoBox>
 
-              <div className="flex gap-3">
-                <BigButton
-                  onClick={handleLinuxSetup}
-                  disabled={isSettingUp || setupComplete}
-                  className="!min-h-[44px] !py-2"
-                >
-                  {isSettingUp ? "Setting up..." : setupComplete ? "Setup Complete" : "Auto Setup"}
-                </BigButton>
+            <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-amber-400">Virtual Audio Setup</h3>
+                {linuxSetupInProgress && (
+                  <span className="text-sm text-amber-400 animate-pulse">Running...</span>
+                )}
+                {linuxSetupComplete && (
+                  <span className="text-sm text-green-400">✓ Complete</span>
+                )}
+                {linuxSetupError && (
+                  <span className="text-sm text-red-400">✗ Error</span>
+                )}
               </div>
 
-              {setupError && (
-                <p className="text-sm text-red-400">Error: {setupError}</p>
+              {/* Verbose log display */}
+              <div className="relative">
+                <div className="bg-gray-900 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs">
+                  {linuxSetupLog.length === 0 ? (
+                    <p className="text-gray-500">Waiting to start...</p>
+                  ) : (
+                    linuxSetupLog.map((line, i) => (
+                      <div
+                        key={i}
+                        className={
+                          line.startsWith("✓") ? "text-green-400" :
+                          line.startsWith("✗") ? "text-red-400" :
+                          line.startsWith("Warning") ? "text-amber-400" :
+                          line.includes("Found sink") || line.includes("Found source") ? "text-blue-400" :
+                          "text-gray-300"
+                        }
+                      >
+                        {line}
+                      </div>
+                    ))
+                  )}
+                  <div ref={logEndRef} />
+                </div>
+                {linuxSetupLog.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const logText = linuxSetupLog.join("\n");
+                      navigator.clipboard.writeText(logText);
+                      // Brief visual feedback
+                      const btn = document.getElementById("copy-log-btn");
+                      if (btn) {
+                        btn.textContent = "Copied!";
+                        setTimeout(() => { btn.textContent = "Copy Log"; }, 1500);
+                      }
+                    }}
+                    id="copy-log-btn"
+                    className="absolute top-2 right-2 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded"
+                  >
+                    Copy Log
+                  </button>
+                )}
+              </div>
+
+              {linuxSetupError && (
+                <div className="bg-red-900/30 border border-red-700 rounded-lg p-3">
+                  <p className="text-sm text-red-400"><strong>Error:</strong> {linuxSetupError}</p>
+                </div>
               )}
 
-              {setupComplete && (
-                <p className="text-sm text-green-400">
-                  Virtual audio device created! You can now proceed to audio setup.
-                </p>
+              {linuxSetupComplete && (
+                <div className="bg-green-900/30 border border-green-700 rounded-lg p-3">
+                  <p className="text-sm text-green-400">
+                    Virtual audio is ready! Your microphone and morse tones will be mixed together.
+                  </p>
+                </div>
+              )}
+
+              {/* Manual retry button if needed */}
+              {(linuxSetupError || (!linuxSetupInProgress && !linuxSetupComplete)) && onSetupLinuxAudio && (
+                <BigButton
+                  onClick={() => onSetupLinuxAudio()}
+                  disabled={linuxSetupInProgress}
+                  className="!min-h-[44px] !py-2"
+                >
+                  {linuxSetupInProgress ? "Setting up..." : "Retry Setup"}
+                </BigButton>
               )}
             </div>
 
-            <InfoBox variant="info" title="Manual Setup">
+            <InfoBox variant="info" title="Troubleshooting">
               <p className="text-sm">
-                If auto setup doesn't work, you may need to install dependencies:
+                If setup fails, you may need to install dependencies first:
               </p>
               <code className="block mt-2 text-xs bg-gray-900 p-2 rounded overflow-x-auto whitespace-pre-wrap">
                 sudo apt-get install pulseaudio-utils pipewire-alsa libasound2-plugins
               </code>
               <p className="text-sm mt-2">
-                Then restart the app and try auto setup again.
+                Then restart the app and it will try again automatically.
               </p>
             </InfoBox>
           </div>
