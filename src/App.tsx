@@ -213,6 +213,21 @@ function App() {
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
 
+      // On macOS, auto-detect BlackHole and set it as the output device
+      // (similar to how Linux auto-detects VailZoomer)
+      if (detectedOS === "macos") {
+        const blackHoleDevice = outputDeviceList.find(d =>
+          d.internal_name.toLowerCase().includes("blackhole") ||
+          d.display_name.toLowerCase().includes("blackhole")
+        );
+        if (blackHoleDevice && savedSettings.output_device !== blackHoleDevice.internal_name) {
+          console.log("[audio] Auto-selecting BlackHole as output device:", blackHoleDevice.display_name);
+          savedSettings.output_device = blackHoleDevice.internal_name;
+          setSelectedOutputDevice(blackHoleDevice.internal_name);
+          updateSettings({ output_device: blackHoleDevice.internal_name });
+        }
+      }
+
       // On Linux, check if VailZoomer exists - if not, mute mic to prevent echo
       // Also reset any stale VailZoomer settings since devices are cleaned up on exit
       if (detectedOS === "linux") {
@@ -261,8 +276,10 @@ function App() {
         if (!wizardCompleted) {
           // Save the user's mic volume preference so we can restore it later
           savedMicVolumeRef.current = savedSettings.mic_volume;
-          // Mute at backend only (don't persist to settings file)
+          // Mute at backend and update UI so slider shows muted state
           await invoke("set_mic_volume", { volume: 0.0 });
+          setSettings(prev => ({ ...prev, mic_volume: 0.0 }));
+          settingsRef.current = { ...settingsRef.current, mic_volume: 0.0 };
         }
       } catch (err) {
         console.error("Failed to start audio:", err);
@@ -319,7 +336,7 @@ function App() {
     };
   }, []);
 
-  // Poll audio levels at ~30fps
+  // Poll audio levels at ~10fps (100ms) - lower frequency to reduce IPC pressure on macOS
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -332,10 +349,60 @@ function App() {
       } catch {
         // Ignore errors during polling
       }
-    }, 33);
+    }, 100);
 
     return () => clearInterval(interval);
   }, []);
+
+  // Poll audio devices to detect plug/unplug (e.g. Bluetooth headphones)
+  // Also auto-restart audio when the device list changes so streams use the correct device/sample rate
+  const prevInputDevicesRef = useRef<string>("");
+  const prevOutputDevicesRef = useRef<string>("");
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const [newInputDevices, newOutputDevices] = await Promise.all([
+          invoke<DeviceInfo[]>("list_input_devices"),
+          invoke<DeviceInfo[]>("list_audio_devices"),
+        ]);
+
+        // Build a comparable string of device names
+        const newInputKey = newInputDevices.map(d => d.internal_name).sort().join("|");
+        const newOutputKey = newOutputDevices.map(d => d.internal_name).sort().join("|");
+
+        const inputChanged = prevInputDevicesRef.current !== "" && prevInputDevicesRef.current !== newInputKey;
+        const outputChanged = prevOutputDevicesRef.current !== "" && prevOutputDevicesRef.current !== newOutputKey;
+
+        prevInputDevicesRef.current = newInputKey;
+        prevOutputDevicesRef.current = newOutputKey;
+
+        // Always update the device lists so the UI shows current devices
+        setInputDevices(newInputDevices);
+        setOutputDevices(newOutputDevices);
+
+        // If devices changed and audio is running, restart audio to pick up new default device
+        if ((inputChanged || outputChanged) && audioStarted) {
+          console.log("[audio] Device list changed, restarting audio...");
+          try {
+            await invoke("stop_audio");
+            // Give CoreAudio time to fully release the device before re-opening
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await invoke("start_audio_with_all_devices", {
+              outputDevice: selectedOutputDevice,
+              inputDevice: selectedInputDevice,
+              localDevice: selectedLocalDevice,
+            });
+          } catch (err) {
+            console.error("[audio] Failed to restart audio after device change:", err);
+          }
+        }
+      } catch {
+        // Ignore errors during polling
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [audioStarted, selectedOutputDevice, selectedInputDevice, selectedLocalDevice]);
 
   // Poll MIDI devices to detect plug/unplug
   useEffect(() => {
@@ -493,6 +560,8 @@ function App() {
   ) => {
     try {
       await invoke("stop_audio");
+      // Give CoreAudio time to fully release the device before re-opening
+      await new Promise(resolve => setTimeout(resolve, 500));
       // Use localDevice if provided, otherwise fall back to current selectedLocalDevice
       const effectiveLocalDevice = localDevice !== undefined ? localDevice : selectedLocalDevice;
       await invoke("start_audio_with_all_devices", {
@@ -524,9 +593,16 @@ function App() {
   };
 
   // Complete the wizard
-  const completeWizard = () => {
+  const completeWizard = async () => {
     localStorage.setItem(WIZARD_COMPLETE_KEY, "true");
     setCwText(""); // Clear any decoded text from testing during wizard
+
+    // Restore mic volume if it was muted during wizard and user didn't adjust it
+    const currentMicVol = settingsRef.current.mic_volume;
+    if (currentMicVol === 0 && savedMicVolumeRef.current > 0) {
+      await updateSettings({ mic_volume: savedMicVolumeRef.current });
+    }
+
     setAppMode("main");
   };
 
@@ -737,7 +813,9 @@ function App() {
                 console.log("[Step3] Available output devices:", outputDevices.map(d => d.internal_name));
                 const firstLocalDevice = outputDevices.find(d =>
                   !d.internal_name.toLowerCase().includes("vailzoomer") &&
-                  !d.display_name.toLowerCase().includes("vail zoomer")
+                  !d.display_name.toLowerCase().includes("vail zoomer") &&
+                  !d.internal_name.toLowerCase().includes("blackhole") &&
+                  !d.display_name.toLowerCase().includes("blackhole")
                 );
                 if (firstLocalDevice) {
                   localDev = firstLocalDevice.internal_name;

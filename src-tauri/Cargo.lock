@@ -4744,8 +4744,9 @@ dependencies = [
 
 [[package]]
 name = "vail-zoomer"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
+ "cc",
  "cpal",
  "crossbeam-channel",
  "dirs 5.0.1",

@@ -43,32 +43,52 @@ pub struct MidiHandler {
     output_connection: Option<MidiOutputConnection>,
     event_rx: Receiver<MidiEvent>,
     event_tx: Sender<MidiEvent>,
+    /// Persistent MidiInput client used only for listing available devices.
+    /// Keeping this alive avoids creating/disposing CoreMIDI clients on every
+    /// poll cycle, which can cause macOS to stop reporting hot-plugged devices.
+    listing_client: Option<MidiInput>,
 }
 
 impl MidiHandler {
     pub fn new() -> Result<Self, String> {
         let (event_tx, event_rx) = mpsc::channel();
 
+        // Create a persistent MidiInput for listing devices.
+        // On macOS this avoids repeatedly creating/disposing CoreMIDI clients
+        // which can break hot-plug detection.
+        let listing_client = MidiInput::new("Vail Zoomer List").ok();
+
         Ok(Self {
             input_connection: None,
             output_connection: None,
             event_rx,
             event_tx,
+            listing_client,
         })
     }
 
     /// List available MIDI input devices
     pub fn list_devices(&self) -> Vec<String> {
-        // Create a temporary MidiInput just for listing devices
-        match MidiInput::new("Vail Zoomer List") {
-            Ok(midi_in) => {
-                midi_in
-                    .ports()
-                    .iter()
-                    .filter_map(|p| midi_in.port_name(p).ok())
-                    .collect()
+        // Use the persistent listing client to avoid creating/disposing
+        // CoreMIDI clients on every call (fixes macOS hot-plug detection)
+        if let Some(ref midi_in) = self.listing_client {
+            midi_in
+                .ports()
+                .iter()
+                .filter_map(|p| midi_in.port_name(p).ok())
+                .collect()
+        } else {
+            // Fallback: create a temporary client if persistent one failed
+            match MidiInput::new("Vail Zoomer List") {
+                Ok(midi_in) => {
+                    midi_in
+                        .ports()
+                        .iter()
+                        .filter_map(|p| midi_in.port_name(p).ok())
+                        .collect()
+                }
+                Err(_) => vec![],
             }
-            Err(_) => vec![],
         }
     }
 

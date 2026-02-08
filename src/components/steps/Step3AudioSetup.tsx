@@ -30,6 +30,7 @@ export function Step3AudioSetup({
   inputDevices,
   outputDevices,
   selectedInputDevice,
+  selectedOutputDevice,
   selectedLocalDevice,
   sidetoneRoute,
   micLevel,
@@ -42,6 +43,14 @@ export function Step3AudioSetup({
   onBack,
   onNext,
 }: Step3AudioSetupProps) {
+  // Filter out virtual audio devices that users should never select directly
+  const isVirtualDevice = (d: DeviceInfo) => {
+    const iname = d.internal_name.toLowerCase();
+    const dname = d.display_name.toLowerCase();
+    return iname.includes("vailzoomer") || dname.includes("vail zoomer")
+      || iname.includes("blackhole") || dname.includes("blackhole");
+  };
+
   // Check if VailZoomer setup is complete (Linux only)
   const vailZoomerExists = currentOS === "linux" && outputDevices.some(d =>
     d.internal_name === "VailZoomer" ||
@@ -83,7 +92,7 @@ export function Step3AudioSetup({
             value={selectedInputDevice || ""}
             onChange={(v) => onInputDeviceChange(v || null)}
             options={inputDevices
-              .filter((d) => !d.internal_name.toLowerCase().includes("vailzoomer") && !d.display_name.toLowerCase().includes("vail zoomer"))
+              .filter((d) => !isVirtualDevice(d))
               .map((d) => ({
                 value: d.internal_name,
                 label: d.display_name,
@@ -126,6 +135,42 @@ export function Step3AudioSetup({
             </p>
           )}
         </div>
+
+        {/* BlackHole status on macOS */}
+        {currentOS === "macos" && (() => {
+          const hasBlackHole = outputDevices.some(d =>
+            d.internal_name.toLowerCase().includes("blackhole") ||
+            d.display_name.toLowerCase().includes("blackhole")
+          );
+          const blackHoleSelected = selectedOutputDevice?.toLowerCase().includes("blackhole");
+          if (!hasBlackHole) {
+            return (
+              <InfoBox variant="warning" title="BlackHole not detected">
+                <p className="text-sm">
+                  BlackHole 2ch is required to send morse tones to Zoom.
+                  Go back to Step 2 to install it, then restart the app.
+                </p>
+              </InfoBox>
+            );
+          }
+          if (!blackHoleSelected) {
+            return (
+              <InfoBox variant="warning" title="BlackHole not active">
+                <p className="text-sm">
+                  BlackHole was found but isn't set as the output device.
+                  Restart the app to auto-configure it.
+                </p>
+              </InfoBox>
+            );
+          }
+          return (
+            <InfoBox variant="success" title="BlackHole active">
+              <p className="text-sm">
+                Audio is routed through BlackHole to Zoom.
+              </p>
+            </InfoBox>
+          );
+        })()}
 
         {/* Sidetone routing - simplified to match Windows version */}
         <div className="space-y-2">
@@ -171,7 +216,7 @@ export function Step3AudioSetup({
               value={selectedLocalDevice || ""}
               onChange={(v) => onLocalDeviceChange(v || null)}
               options={outputDevices
-                .filter((d) => !d.internal_name.toLowerCase().includes("vailzoomer") && !d.display_name.toLowerCase().includes("vail zoomer"))
+                .filter((d) => !isVirtualDevice(d))
                 .map((d) => ({
                   value: d.internal_name,
                   label: d.display_name,

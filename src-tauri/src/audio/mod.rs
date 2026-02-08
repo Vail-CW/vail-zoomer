@@ -12,6 +12,12 @@ use ringbuf::{HeapRb, traits::{Producer, Consumer, Split}};
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn request_microphone_permission() -> i32;
+    fn check_microphone_permission() -> i32;
+}
+
 pub use sidetone::SidetoneGenerator;
 
 /// Device info with display name and internal name for selection
@@ -487,7 +493,7 @@ fn audio_thread(
                                 eprintln!("Failed to start mic input: {}", e);
                             } else {
                                 input_stream = Some(new_stream);
-                                println!("Mic input started: {}", input_name);
+                                eprintln!("[audio] Mic input started: {}", input_name);
                             }
                         }
                         Err(e) => eprintln!("Failed to create mic input stream: {}", e),
@@ -500,7 +506,7 @@ fn audio_thread(
                                 eprintln!("Failed to start default mic: {}", e);
                             } else {
                                 input_stream = Some(new_stream);
-                                println!("Default mic input started");
+                                eprintln!("[audio] Default mic input started");
                             }
                         }
                         Err(e) => eprintln!("No mic available: {}", e),
@@ -530,7 +536,7 @@ fn audio_thread(
                             eprintln!("Failed to start audio output: {}", e);
                         } else {
                             output_stream = Some(new_stream);
-                            println!("Audio output started (sidetone: {})", include_sidetone_in_output);
+                            eprintln!("[audio] Audio output started (sidetone: {})", include_sidetone_in_output);
                         }
                     }
                     Err(e) => eprintln!("Failed to create audio output stream: {}", e),
@@ -645,6 +651,25 @@ fn create_input_stream(
     producer: MicProducer,
     mic_level: Arc<AtomicU32>,
 ) -> Result<Stream, String> {
+    // On macOS, always request microphone permission via AVFoundation.
+    // CoreAudio alone doesn't always trigger the TCC permission dialog,
+    // especially with ad-hoc signed apps. We call requestAccess every time
+    // (not just when status != authorized) because it also initializes the
+    // AVFoundation mic subsystem, which may be needed for CoreAudio to work.
+    #[cfg(target_os = "macos")]
+    {
+        let status = unsafe { check_microphone_permission() };
+        eprintln!("[audio] macOS mic permission status: {} (0=notDetermined, 1=restricted, 2=denied, 3=authorized)", status);
+
+        eprintln!("[audio] Requesting microphone permission...");
+        let result = unsafe { request_microphone_permission() };
+        eprintln!("[audio] Microphone permission result: {} (1=granted, 0=denied, -1=timeout)", result);
+
+        if result != 1 {
+            return Err("Microphone permission denied. Please enable in System Settings > Privacy & Security > Microphone".to_string());
+        }
+    }
+
     let host = cpal::default_host();
 
     // On Linux, always use the "pipewire" ALSA device and route using pactl
@@ -697,6 +722,10 @@ fn create_input_stream(
         .default_input_config()
         .map_err(|e| e.to_string())?;
 
+    eprintln!("[audio] Input device config: channels={}, sample_rate={}, format={:?}",
+        config.channels(), config.sample_rate().0, config.sample_format());
+    eprintln!("[audio] Input device name: {:?}", device.name());
+
     let channels = config.channels() as usize;
 
     // Capture baseline source-output IDs before creating stream
@@ -733,6 +762,9 @@ fn build_input_stream<T: cpal::SizedSample>(
 where
     f32: FromSample<T>,
 {
+    let callback_count = Arc::new(AtomicU32::new(0));
+    let callback_count_clone = Arc::clone(&callback_count);
+
     let stream = device
         .build_input_stream(
             config,
@@ -751,6 +783,13 @@ where
 
                     // Track peak level
                     peak = peak.max(sample.abs());
+                }
+
+                // Periodic diagnostic log (~once per second at typical callback rates)
+                let count = callback_count_clone.fetch_add(1, Ordering::Relaxed);
+                if count % 100 == 0 {
+                    eprintln!("[mic-input] callback #{}, peak={:.6}, samples={}, channels={}",
+                        count, peak, data.len(), channels);
                 }
 
                 // Update mic level with smoothing (fast attack, slow decay)
