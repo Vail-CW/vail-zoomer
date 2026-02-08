@@ -34,3 +34,7 @@ src-tauri/NSIS/
 
 # Settings (user-specific)
 *.settings.json
+
+# Test builds
+test-builds/
+crashlog.txt
