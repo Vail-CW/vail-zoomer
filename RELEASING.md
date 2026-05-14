@@ -111,15 +111,11 @@ If you're already running Vail Zoomer, you'll be prompted to auto-update on
 next launch — no manual download needed.
 ```
 
-### 6. Update vailadapter.com (manual)
+### 6. vailadapter.com
 
-Asset filenames contain the version (`Vail.Zoomer-v0.2.7-windows-x64.zip`), so
-any direct download link on vailadapter.com pins to the previous version and
-must be updated each release. Either:
-
-- Update the link to the new version's URL, **or**
-- Point the link at the GitHub Releases page so users always see the latest
-  (<https://github.com/Vail-CW/vail-zoomer/releases/latest>).
+The Vail Zoomer download page on vailadapter.com dynamically resolves to the
+newest official GitHub release, so it picks up new versions automatically once
+the release is published (no manual step required).
 
 ### 7. Sync local `main` to remote (if needed)
 
