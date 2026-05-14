@@ -485,9 +485,16 @@ fn audio_thread(
                 // Update sidetone route
                 sidetone_route.store(route as u32, Ordering::Relaxed);
 
-                // Start input stream (mic capture)
+                // Determine the output device's sample rate up-front so the mic
+                // stream can resample to match. Without this, a mic running at
+                // 44.1 kHz feeding into a 48 kHz output (e.g. VB-Cable) sounds
+                // garbled / staticy because samples drift against the clock.
+                let target_rate = query_output_sample_rate(output_device.as_deref());
+                eprintln!("[audio] Target output sample rate (for mic resampler): {} Hz", target_rate);
+
+                // Start input stream (mic capture, resampled to target_rate)
                 if let Some(ref input_name) = input_device {
-                    match create_input_stream(Some(input_name.as_str()), Arc::clone(&producer), Arc::clone(&mic_level)) {
+                    match create_input_stream(Some(input_name.as_str()), Arc::clone(&producer), Arc::clone(&mic_level), target_rate) {
                         Ok(new_stream) => {
                             if let Err(e) = new_stream.play() {
                                 eprintln!("Failed to start mic input: {}", e);
@@ -500,7 +507,7 @@ fn audio_thread(
                     }
                 } else {
                     // Try default input device
-                    match create_input_stream(None, Arc::clone(&producer), Arc::clone(&mic_level)) {
+                    match create_input_stream(None, Arc::clone(&producer), Arc::clone(&mic_level), target_rate) {
                         Ok(new_stream) => {
                             if let Err(e) = new_stream.play() {
                                 eprintln!("Failed to start default mic: {}", e);
@@ -645,11 +652,68 @@ fn audio_thread(
 type MicConsumer = Arc<parking_lot::Mutex<ringbuf::HeapCons<f32>>>;
 type MicProducer = Arc<parking_lot::Mutex<ringbuf::HeapProd<f32>>>;
 
-/// Create an audio input stream (microphone capture)
+/// Resolve the output device that would be used for a given name and return
+/// its default sample rate. Mirrors the lookup logic in `create_output_stream`
+/// so the mic resampler targets the same device that the output stream will
+/// actually open. Falls back to 48 kHz (VB-Cable's native rate, also the
+/// default for most modern output devices) if anything fails.
+fn query_output_sample_rate(device_name: Option<&str>) -> f32 {
+    let host = cpal::default_host();
+
+    let device = if let Some(name) = device_name {
+        let devices: Vec<_> = match host.output_devices() {
+            Ok(d) => d.collect(),
+            Err(_) => return 48000.0,
+        };
+
+        #[cfg(target_os = "linux")]
+        let search_names: Vec<&str> = if name.to_lowercase().contains("vailzoomer")
+            || name.to_lowercase().contains("vail zoomer")
+        {
+            vec![name, "VailZoomer", "vailzoomer", "Vail Zoomer", "pipewire", "default"]
+        } else {
+            vec![name, "pipewire", "default"]
+        };
+        #[cfg(not(target_os = "linux"))]
+        let search_names: Vec<&str> = vec![name];
+
+        let mut found = None;
+        for search_name in &search_names {
+            found = devices
+                .iter()
+                .find(|d| {
+                    d.name()
+                        .map(|n| {
+                            n == *search_name
+                                || n.to_lowercase().contains(&search_name.to_lowercase())
+                                || search_name.to_lowercase().contains(&n.to_lowercase())
+                        })
+                        .unwrap_or(false)
+                });
+            if found.is_some() {
+                break;
+            }
+        }
+        found.cloned().or_else(|| host.default_output_device())
+    } else {
+        host.default_output_device()
+    };
+
+    device
+        .and_then(|d| d.default_output_config().ok())
+        .map(|c| c.sample_rate().0 as f32)
+        .unwrap_or(48000.0)
+}
+
+/// Create an audio input stream (microphone capture).
+/// Samples are linear-resampled to `target_sample_rate` before being pushed to
+/// the ring buffer, so the output stream can drain at its own rate without
+/// clock drift / garbled-voice artifacts.
 fn create_input_stream(
     device_name: Option<&str>,
     producer: MicProducer,
     mic_level: Arc<AtomicU32>,
+    target_sample_rate: f32,
 ) -> Result<Stream, String> {
     // On macOS, always request microphone permission via AVFoundation.
     // CoreAudio alone doesn't always trigger the TCC permission dialog,
@@ -727,6 +791,8 @@ fn create_input_stream(
     eprintln!("[audio] Input device name: {:?}", device.name());
 
     let channels = config.channels() as usize;
+    let input_rate = config.sample_rate().0 as f32;
+    eprintln!("[audio] Resampling mic {} Hz -> {} Hz", input_rate, target_sample_rate);
 
     // Capture baseline source-output IDs before creating stream
     #[cfg(target_os = "linux")]
@@ -737,9 +803,9 @@ fn create_input_stream(
     };
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config.into(), producer, channels, mic_level),
-        cpal::SampleFormat::I16 => build_input_stream::<i16>(&device, &config.into(), producer, channels, mic_level),
-        cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &config.into(), producer, channels, mic_level),
+        cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
+        cpal::SampleFormat::I16 => build_input_stream::<i16>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
+        cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
         _ => return Err("Unsupported input sample format".to_string()),
     }?;
 
@@ -758,12 +824,22 @@ fn build_input_stream<T: cpal::SizedSample>(
     producer: MicProducer,
     channels: usize,
     mic_level: Arc<AtomicU32>,
+    input_rate: f32,
+    target_rate: f32,
 ) -> Result<Stream, String>
 where
     f32: FromSample<T>,
 {
     let callback_count = Arc::new(AtomicU32::new(0));
     let callback_count_clone = Arc::clone(&callback_count);
+
+    // Linear resampler state. `step` is how far we advance in input-sample
+    // space per output sample. Each incoming mono input sample bumps the
+    // "input clock" by 1.0; we emit interpolated output samples while
+    // `pos <= 1.0`.
+    let step = input_rate / target_rate;
+    let mut prev_sample: f32 = 0.0;
+    let mut pos: f32 = 0.0;
 
     let stream = device
         .build_input_stream(
@@ -772,24 +848,33 @@ where
                 let mut producer = producer.lock();
                 let mut peak: f32 = 0.0;
 
-                // Convert to mono (average channels) and push to ring buffer
+                // Convert to mono (average channels) and resample to target_rate
                 for frame in data.chunks(channels) {
-                    let sample: f32 = frame
+                    let curr: f32 = frame
                         .iter()
                         .map(|s| <f32 as FromSample<T>>::from_sample_(*s))
                         .sum::<f32>()
                         / channels as f32;
-                    let _ = producer.try_push(sample);
 
-                    // Track peak level
-                    peak = peak.max(sample.abs());
+                    // Track peak on the pre-resample signal
+                    peak = peak.max(curr.abs());
+
+                    // Emit any output samples whose phase falls between
+                    // prev_sample (last input) and curr (this input).
+                    while pos <= 1.0 {
+                        let resampled = prev_sample + (curr - prev_sample) * pos;
+                        let _ = producer.try_push(resampled);
+                        pos += step;
+                    }
+                    pos -= 1.0;
+                    prev_sample = curr;
                 }
 
                 // Periodic diagnostic log (~once per second at typical callback rates)
                 let count = callback_count_clone.fetch_add(1, Ordering::Relaxed);
                 if count % 100 == 0 {
-                    eprintln!("[mic-input] callback #{}, peak={:.6}, samples={}, channels={}",
-                        count, peak, data.len(), channels);
+                    eprintln!("[mic-input] callback #{}, peak={:.6}, samples={}, channels={}, step={:.4}",
+                        count, peak, data.len(), channels, step);
                 }
 
                 // Update mic level with smoothing (fast attack, slow decay)
