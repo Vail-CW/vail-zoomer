@@ -11,6 +11,10 @@ interface BigSelectProps {
   placeholder?: string;
   label?: string;
   className?: string;
+  /** Fires when the user is about to interact with the dropdown — useful for
+      re-querying device lists so hot-plugged hardware (BT mic, USB headset)
+      shows up without restarting the app. */
+  onOpen?: () => void;
 }
 
 export function BigSelect({
@@ -20,6 +24,7 @@ export function BigSelect({
   placeholder = "Select an option...",
   label,
   className = "",
+  onOpen,
 }: BigSelectProps) {
   return (
     <div className={className}>
@@ -31,6 +36,8 @@ export function BigSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onMouseDown={onOpen}
+        onFocus={onOpen}
         className="w-full bg-gray-700 text-white text-lg px-4 py-3 rounded-xl border-2 border-gray-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
       >
         <option value="">{placeholder}</option>

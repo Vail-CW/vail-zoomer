@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { WizardLayout } from "../wizard/WizardLayout";
 import { BigSelect } from "../shared/BigSelect";
 import { InfoBox } from "../shared/InfoBox";
@@ -24,6 +26,9 @@ interface Step3AudioSetupProps {
   onMicVolumeChange: (vol: number) => void;
   onBack: () => void;
   onNext: () => void;
+  /** Re-query backend device lists. Called when a dropdown opens so a freshly
+      connected Bluetooth/USB device shows up without restarting the app. */
+  onRefreshDevices?: () => void;
 }
 
 export function Step3AudioSetup({
@@ -42,7 +47,43 @@ export function Step3AudioSetup({
   onMicVolumeChange,
   onBack,
   onNext,
+  onRefreshDevices,
 }: Step3AudioSetupProps) {
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diagText, setDiagText] = useState<string>("");
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [diagCopied, setDiagCopied] = useState(false);
+  const [refreshSpin, setRefreshSpin] = useState(false);
+
+  const handleRefresh = async () => {
+    if (!onRefreshDevices) return;
+    setRefreshSpin(true);
+    try {
+      await Promise.resolve(onRefreshDevices());
+    } finally {
+      setTimeout(() => setRefreshSpin(false), 400);
+    }
+  };
+
+  const openDiagnostics = async () => {
+    setDiagOpen(true);
+    setDiagLoading(true);
+    setDiagText("");
+    try {
+      const text = await invoke<string>("dump_linux_audio_diagnostics");
+      setDiagText(text);
+    } catch (e) {
+      setDiagText(`Failed to gather diagnostics: ${e}`);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const copyDiag = () => {
+    navigator.clipboard.writeText(diagText);
+    setDiagCopied(true);
+    setTimeout(() => setDiagCopied(false), 1500);
+  };
   // Filter out virtual audio devices that users should never select directly
   const isVirtualDevice = (d: DeviceInfo) => {
     const iname = d.internal_name.toLowerCase();
@@ -58,6 +99,22 @@ export function Step3AudioSetup({
     d.display_name.includes("Vail Zoomer")
   );
   const needsSetup = currentOS === "linux" && !vailZoomerExists;
+
+  // The user must pick a real mic — never "system default". If nothing is
+  // selected yet (first run, or the previously-chosen device disappeared),
+  // auto-pick the first non-virtual input so they have a valid choice
+  // immediately. They can change it via the dropdown, but they can never
+  // pick a meaningless "default" option.
+  const realInputs = inputDevices.filter((d) => !isVirtualDevice(d));
+  useEffect(() => {
+    if (realInputs.length === 0) return;
+    const isStillValid = selectedInputDevice
+      && realInputs.some((d) => d.internal_name === selectedInputDevice);
+    if (!isStillValid) {
+      onInputDeviceChange(realInputs[0].internal_name);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputDevices, selectedInputDevice]);
 
   return (
     <WizardLayout
@@ -87,18 +144,37 @@ export function Step3AudioSetup({
 
         {/* Microphone selection with level meter and volume control */}
         <div className="space-y-2">
-          <label className="block text-sm text-gray-300">Your microphone:</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm text-gray-300">Your microphone:</label>
+            {onRefreshDevices && (
+              <button
+                onClick={handleRefresh}
+                title="Re-scan connected microphones"
+                className="text-xs text-gray-400 hover:text-amber-300 flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800"
+              >
+                <span className={refreshSpin ? "inline-block animate-spin" : "inline-block"}>↻</span>
+                Refresh
+              </button>
+            )}
+          </div>
           <BigSelect
-            value={selectedInputDevice || ""}
-            onChange={(v) => onInputDeviceChange(v || null)}
-            options={inputDevices
-              .filter((d) => !isVirtualDevice(d))
-              .map((d) => ({
-                value: d.internal_name,
-                label: d.display_name,
-              }))}
-            placeholder="System Default"
+            value={selectedInputDevice && realInputs.some((d) => d.internal_name === selectedInputDevice)
+              ? selectedInputDevice
+              : ""}
+            onChange={(v) => v && onInputDeviceChange(v)}
+            onOpen={onRefreshDevices}
+            options={realInputs.map((d) => ({
+              value: d.internal_name,
+              label: d.display_name,
+            }))}
+            placeholder={realInputs.length === 0 ? "No microphones detected" : "Choose a microphone…"}
           />
+          <button
+            onClick={openDiagnostics}
+            className="text-xs text-gray-500 hover:text-amber-300 underline"
+          >
+            Don't see your microphone?
+          </button>
 
           {/* Mic volume slider with mute indicator */}
           <div className="flex items-center gap-3">
@@ -215,6 +291,7 @@ export function Step3AudioSetup({
             <BigSelect
               value={selectedLocalDevice || ""}
               onChange={(v) => onLocalDeviceChange(v || null)}
+              onOpen={onRefreshDevices}
               options={outputDevices
                 .filter((d) => !isVirtualDevice(d))
                 .map((d) => ({
@@ -227,6 +304,54 @@ export function Step3AudioSetup({
         )}
 
       </div>
+
+      {/* Diagnostics modal — last-resort visibility for when a mic doesn't
+          appear in the filtered dropdown. Dumps the full system audio state
+          (sources, sinks, BT profiles, ALSA, packages) for the user to
+          share with the developer. */}
+      {diagOpen && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-amber-400">Audio diagnostics</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Full snapshot of every audio device the system can see — including ones
+                  Vail Zoomer hides. If your mic is missing here, copy this and share with the developers.
+                </p>
+              </div>
+              <button
+                onClick={() => setDiagOpen(false)}
+                className="text-gray-400 hover:text-white text-2xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {diagLoading ? (
+                <p className="text-sm text-gray-400">Collecting…</p>
+              ) : (
+                <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap">{diagText}</pre>
+              )}
+            </div>
+            <div className="p-3 border-t border-gray-700 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDiagOpen(false)}
+                className="px-3 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg"
+              >
+                Close
+              </button>
+              <button
+                onClick={copyDiag}
+                disabled={diagLoading || !diagText}
+                className="px-3 py-2 text-sm bg-amber-600 hover:bg-amber-500 text-white rounded-lg disabled:opacity-50"
+              >
+                {diagCopied ? "Copied!" : "Copy for developer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </WizardLayout>
   );
 }

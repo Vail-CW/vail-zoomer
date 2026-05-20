@@ -59,7 +59,14 @@
         "bundleMediaFramework": false
       },
       "deb": {
-        "depends": ["libasound2"]
+        "depends": [
+          "libasound2t64 | libasound2",
+          "pulseaudio-utils",
+          "pipewire-pulse | pulseaudio",
+          "pipewire-alsa | libasound2-plugins",
+          "libasound2-plugins",
+          "systemd"
+        ]
       }
     }
   },

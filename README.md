@@ -141,23 +141,42 @@ By default, if you send to BlackHole, you won't hear the sidetone locally. To he
 
 **Vail Zoomer handles the entire virtual audio setup for you in-app**, on any distro. There are no manual config files to write and no per-distro instructions to follow.
 
+#### Recommended install (Ubuntu / Debian / Mint / Pop!_OS / Zorin)
+
+Use the `.deb` rather than the AppImage on Ubuntu and derivatives — the deb declares the audio packages it needs, so apt installs them for you in one shot:
+
+```bash
+sudo apt install ./vail-zoomer_*_amd64.deb
+```
+
+If you must use the AppImage on Ubuntu 22.04+, install FUSE first (Ubuntu dropped libfuse2 from the default install):
+
+```bash
+sudo apt install libfuse2t64    # Ubuntu 24.04+
+sudo apt install libfuse2       # Ubuntu 22.04 / 20.04
+chmod +x vail-zoomer*.AppImage
+./vail-zoomer*.AppImage
+```
+
 #### How it works
 
 1. **Launch Vail Zoomer**
-2. If no virtual audio device is detected, you'll see a blue banner: "Virtual audio device not found" — click **"Setup Virtual Audio"**
-3. The app detects your distro (Debian/Arch/Fedora/SUSE/etc.) and your audio system (PipeWire or PulseAudio), then creates the virtual devices for you
-4. If any system package is missing, the app shows the exact install command for *your* distro (e.g., `sudo pacman -S pipewire-alsa` on Arch, `sudo apt install pulseaudio-utils` on Ubuntu)
-5. Once complete, **VailZoomer** (output) and **VailZoomerMic** (the mic Zoom sees) appear in your audio devices, and persist across reboots
+2. On first launch, the wizard will run the audio setup automatically (or click "Setup Virtual Audio" from the banner)
+3. The app detects your distro (Debian/Arch/Fedora/SUSE/etc.) and your audio system (PipeWire or PulseAudio), then creates **VailZoomer** (output) and **VailZoomerMic** (the mic Zoom sees) via `pactl`
+4. It installs a systemd user service at `~/.config/systemd/user/vail-zoomer-audio.service` so the devices come back automatically on every login — **you only run setup once**
+5. If any system package is missing, the app shows the exact install command for *your* distro (e.g., `sudo pacman -S pipewire-alsa` on Arch, `sudo apt install pulseaudio-utils` on Ubuntu)
 
-You can re-run the setup anytime from the **Audio Routing** section at the bottom of the app.
+You can re-run setup, or remove the devices, anytime from the **Audio Routing** section at the bottom of the app.
 
 #### Troubleshooting Linux
 
-- **Setup fails with a missing-package error**: copy/paste the install command shown in the app, then click "Setup Virtual Audio" again
-- **No virtual device after setup**: log out and back in, or restart
-- **AppImage won't run**: `chmod +x vail-zoomer*.AppImage`
+- **Setup fails with a missing-package error**: copy/paste the install command shown in the app, then click "Retry Setup"
+- **No virtual device after setup**: log out and back in once so the systemd user service starts. Confirm with `systemctl --user status vail-zoomer-audio.service`
+- **AppImage won't run / silent failure**: install libfuse2 (see Recommended install above), then `chmod +x vail-zoomer*.AppImage`
 - **MIDI device not found**: ensure the keyer is plugged in **before** launching the app; run `aconnect -l` to confirm Linux sees it
 - **Zoom doesn't show the virtual microphone**: edit `~/.config/zoomus.conf` and set `system.audio.type=default` (instead of `alsa`), then restart Zoom
+- **Snap-installed Zoom/Discord can't see VailZoomerMic**: snap-confined apps only see the *default* PulseAudio source. Either install Zoom from the .deb (recommended) or set VailZoomerMic as your system default: `pactl set-default-source VailZoomerMic` (note: all other apps will also pick this up — speak normally and the sidetone gets mixed in)
+- **Diagnose audio problems**: run `bash diagnose_audio.sh` from the repo (or `wget` it from GitHub) and share the output
 
 ---
 
