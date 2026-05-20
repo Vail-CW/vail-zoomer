@@ -12,6 +12,119 @@ use ringbuf::{HeapRb, traits::{Producer, Consumer, Split}};
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
+/// Linux audio routing: PulseAudio/PipeWire-Pulse honor `PULSE_SINK` /
+/// `PULSE_SOURCE`, and pipewire-alsa honors `PIPEWIRE_NODE`. Setting these
+/// before we open the cpal stream is the most reliable way to ensure the
+/// stream lands on the right virtual device — far better than racing a
+/// `pactl move-sink-input` against the new stream's registration.
+///
+/// Env vars are process-global, but cpal stream construction is serialized
+/// on the audio thread, so set→build→clear is safe within that thread.
+#[cfg(target_os = "linux")]
+struct PulseRouteGuard {
+    prev_sink: Option<String>,
+    prev_source: Option<String>,
+    prev_pipewire_node: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+impl PulseRouteGuard {
+    fn for_sink(name: Option<&str>) -> Self {
+        let prev_sink = std::env::var("PULSE_SINK").ok();
+        let prev_pipewire_node = std::env::var("PIPEWIRE_NODE").ok();
+        if let Some(n) = name {
+            std::env::set_var("PULSE_SINK", n);
+            std::env::set_var("PIPEWIRE_NODE", n);
+        } else {
+            std::env::remove_var("PULSE_SINK");
+            std::env::remove_var("PIPEWIRE_NODE");
+        }
+        Self {
+            prev_sink,
+            prev_source: None,
+            prev_pipewire_node,
+        }
+    }
+
+    fn for_source(name: Option<&str>) -> Self {
+        let prev_source = std::env::var("PULSE_SOURCE").ok();
+        let prev_pipewire_node = std::env::var("PIPEWIRE_NODE").ok();
+        if let Some(n) = name {
+            std::env::set_var("PULSE_SOURCE", n);
+            std::env::set_var("PIPEWIRE_NODE", n);
+        } else {
+            std::env::remove_var("PULSE_SOURCE");
+            std::env::remove_var("PIPEWIRE_NODE");
+        }
+        Self {
+            prev_sink: None,
+            prev_source,
+            prev_pipewire_node,
+        }
+    }
+}
+
+/// Return a sink to route the local-monitoring stream to: the user's
+/// chosen device, or the system default — but if the default is VailZoomer
+/// itself (which would create a sidetone loop), pick the first non-VailZoomer
+/// sink instead.
+#[cfg(target_os = "linux")]
+fn resolve_local_sink(explicit: Option<&str>) -> Option<String> {
+    if let Some(name) = explicit {
+        return Some(name.to_string());
+    }
+
+    let default_sink = Command::new("pactl")
+        .args(["get-default-sink"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    if !default_sink.is_empty() && !default_sink.to_lowercase().contains("vailzoomer") {
+        return Some(default_sink);
+    }
+
+    // Default is VailZoomer (or unknown) — pick the first sink that isn't us.
+    Command::new("pactl")
+        .args(["list", "sinks", "short"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+            for line in stdout.lines() {
+                let mut parts = line.split_whitespace();
+                let _id = parts.next();
+                if let Some(name) = parts.next() {
+                    if !name.to_lowercase().contains("vailzoomer") {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+            None
+        })
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PulseRouteGuard {
+    fn drop(&mut self) {
+        match self.prev_sink.take() {
+            Some(v) => std::env::set_var("PULSE_SINK", v),
+            None => std::env::remove_var("PULSE_SINK"),
+        }
+        match self.prev_source.take() {
+            Some(v) => std::env::set_var("PULSE_SOURCE", v),
+            None => std::env::remove_var("PULSE_SOURCE"),
+        }
+        match self.prev_pipewire_node.take() {
+            Some(v) => std::env::set_var("PIPEWIRE_NODE", v),
+            None => std::env::remove_var("PIPEWIRE_NODE"),
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 extern "C" {
     fn request_microphone_permission() -> i32;
@@ -657,6 +770,14 @@ type MicProducer = Arc<parking_lot::Mutex<ringbuf::HeapProd<f32>>>;
 /// so the mic resampler targets the same device that the output stream will
 /// actually open. Falls back to 48 kHz (VB-Cable's native rate, also the
 /// default for most modern output devices) if anything fails.
+///
+/// **Don't optimize this with `pactl list sinks`** — the cpal output stream
+/// goes through the ALSA "pipewire" shim and opens at whatever rate that
+/// shim negotiates, NOT the sink's native rate. PipeWire then resamples
+/// internally between the two. If we point the mic resampler at the sink's
+/// rate, the producer rate and consumer rate diverge, ring buffer overflows,
+/// and audio comes out pitched-down + scratchy. cpal's `default_output_config()`
+/// returns what the stream will actually negotiate — that's the right answer.
 fn query_output_sample_rate(device_name: Option<&str>) -> f32 {
     let host = cpal::default_host();
 
@@ -801,6 +922,14 @@ fn create_input_stream(
     } else {
         Vec::new()
     };
+
+    // Linux: pin the PulseAudio/PipeWire routing target via env vars BEFORE
+    // cpal opens the stream. This is the deterministic path; the legacy
+    // post-creation `pactl move-source-output` below is kept as a fallback
+    // in case the env doesn't take effect (e.g. cpal hits an ALSA backend
+    // that ignores both PULSE_SOURCE and PIPEWIRE_NODE).
+    #[cfg(target_os = "linux")]
+    let _route_guard = PulseRouteGuard::for_source(pulse_source.as_deref());
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
@@ -976,6 +1105,10 @@ fn create_output_stream(
         Vec::new()
     };
 
+    // Pin the routing target via env vars before cpal builds the stream.
+    #[cfg(target_os = "linux")]
+    let _route_guard = PulseRouteGuard::for_sink(pulse_sink.as_deref());
+
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => build_output_stream::<f32>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold, is_recording, recording_buffer),
         cpal::SampleFormat::I16 => build_output_stream::<i16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold, is_recording, recording_buffer),
@@ -1150,6 +1283,13 @@ fn create_local_output_stream(
     #[cfg(target_os = "linux")]
     let baseline_sink_inputs = get_sink_input_ids();
 
+    // Local-monitoring stream must NOT land on VailZoomer (would loop into
+    // the meeting output). Resolve a safe target sink and pin via env.
+    #[cfg(target_os = "linux")]
+    let resolved_local_sink = resolve_local_sink(pulse_sink.as_deref());
+    #[cfg(target_os = "linux")]
+    let _route_guard = PulseRouteGuard::for_sink(resolved_local_sink.as_deref());
+
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => build_local_output_stream::<f32>(&device, &config.into(), sidetone, is_key_down, channels),
         cpal::SampleFormat::I16 => build_local_output_stream::<i16>(&device, &config.into(), sidetone, is_key_down, channels),
@@ -1277,6 +1417,12 @@ fn create_playback_stream(
     // Capture baseline sink-input IDs before creating stream
     #[cfg(target_os = "linux")]
     let baseline_sink_inputs = get_sink_input_ids();
+
+    // Playback should also avoid VailZoomer (same loop concern as local sidetone).
+    #[cfg(target_os = "linux")]
+    let resolved_playback_sink = resolve_local_sink(pulse_sink.as_deref());
+    #[cfg(target_os = "linux")]
+    let _route_guard = PulseRouteGuard::for_sink(resolved_playback_sink.as_deref());
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => build_playback_stream::<f32>(&device, &config.into(), recording_buffer, is_playing, playback_position, channels),
@@ -1616,12 +1762,23 @@ fn list_pulseaudio_sources() -> Option<Vec<DeviceInfo>> {
     let mut handler = SourceController::create().ok()?;
     let devices = handler.list_devices().ok()?;
 
-    // Store PulseAudio names directly - we'll route using pactl, not CPAL device selection
     let result: Vec<DeviceInfo> = devices
         .into_iter()
         .filter_map(|dev| {
             let description = dev.description.clone()?;
             let pa_name = dev.name.clone()?;
+
+            // Drop sink-monitor sources — those are playback taps, not mics,
+            // and they only clutter the mic picker (`.monitor` suffix and the
+            // "Monitor of …" description are PulseAudio's universal markers).
+            // Also drop our own VailZoomer.monitor (used internally as the
+            // VailZoomerMic master) so it doesn't show up as a pickable mic.
+            if pa_name.ends_with(".monitor")
+                || description.starts_with("Monitor of ")
+                || pa_name == "VailZoomer.monitor"
+            {
+                return None;
+            }
 
             Some(DeviceInfo {
                 display_name: description,

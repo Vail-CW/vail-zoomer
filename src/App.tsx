@@ -93,6 +93,8 @@ function App() {
   const [linuxSetupInProgress, setLinuxSetupInProgress] = useState(false);
   const [linuxSetupError, setLinuxSetupError] = useState<string | null>(null);
   const [linuxSetupComplete, setLinuxSetupComplete] = useState(false);
+  const [linuxMissingPkgs, setLinuxMissingPkgs] = useState<string[]>([]);
+  const [linuxInstallInProgress, setLinuxInstallInProgress] = useState(false);
 
   // Update state
   const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
@@ -210,6 +212,24 @@ function App() {
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
 
+      // Enforce: never start audio with a "system default" mic. Auto-pick the
+      // first non-virtual input when the saved choice is missing or no longer
+      // present in the system (e.g. the headset they used last time is
+      // unplugged). Picking a specific device avoids a class of issues users
+      // have hit historically when the system default got reassigned.
+      const realInputs = inputDeviceList.filter((d) => {
+        const n = (d.internal_name + " " + d.display_name).toLowerCase();
+        return !n.includes("vailzoomer") && !n.includes("vail zoomer")
+          && !n.includes("blackhole");
+      });
+      const savedInputStillValid = savedSettings.input_device
+        && realInputs.some((d) => d.internal_name === savedSettings.input_device);
+      if (!savedInputStillValid && realInputs.length > 0) {
+        savedSettings.input_device = realInputs[0].internal_name;
+        setSelectedInputDevice(realInputs[0].internal_name);
+        updateSettings({ input_device: realInputs[0].internal_name });
+      }
+
       // On macOS, auto-detect BlackHole and set it as the output device
       // (similar to how Linux auto-detects VailZoomer)
       if (detectedOS === "macos") {
@@ -226,7 +246,10 @@ function App() {
       }
 
       // On Linux, check if VailZoomer exists - if not, mute mic to prevent echo
-      // Also reset any stale VailZoomer settings since devices are cleaned up on exit
+      // and clear stale settings. With the persistent systemd-user-unit setup
+      // devices should normally be present every launch, but they can still be
+      // absent on first run, after an explicit removal, or if the unit didn't
+      // start (e.g. fresh login on a system that needs a reboot).
       if (detectedOS === "linux") {
         const vailZoomerExists = outputDeviceList.some(d =>
           d.internal_name === "VailZoomer" ||
@@ -234,8 +257,6 @@ function App() {
           d.display_name.includes("Vail Zoomer")
         );
 
-        // Reset linux_audio_setup_completed since devices are cleaned up on exit
-        // Also clear any stale VailZoomer device references
         if (!vailZoomerExists) {
           const outputWasVailZoomer = savedSettings.output_device?.toLowerCase().includes("vailzoomer");
           if (savedSettings.linux_audio_setup_completed || outputWasVailZoomer) {
@@ -256,6 +277,39 @@ function App() {
             await invoke("set_mic_volume", { volume: 0.0 });
             updateSettings({ mic_volume: 0.0 });
           }
+        }
+      }
+
+      // On Linux, ensure the virtual devices exist BEFORE we try to open any
+      // audio streams. Opening a stream against a non-existent sink (e.g. saved
+      // output_device="VailZoomer" but devices not yet loaded) puts cpal /
+      // pipewire-pulse in a confused state and the subsequent pactl
+      // load-module call has been observed to fail until retry.
+      if (detectedOS === "linux") {
+        try {
+          const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
+          setLinuxAudioStatus(status);
+          if (!status.exists) {
+            const missing = await invoke<string[]>("list_linux_missing_prerequisites").catch(() => [] as string[]);
+            setLinuxMissingPkgs(missing);
+            if (missing.length > 0) {
+              setShowLinuxAudioBanner(true);
+              try {
+                await installLinuxAudioPrereqs();
+              } catch (e) {
+                console.error("Auto-install of audio prereqs failed:", e);
+              }
+            } else {
+              try {
+                await setupLinuxAudio();
+              } catch (e) {
+                console.error("Auto-setup of virtual audio failed:", e);
+                setShowLinuxAudioBanner(true);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("Failed to check Linux virtual audio:", err);
         }
       }
 
@@ -280,20 +334,6 @@ function App() {
         }
       } catch (err) {
         console.error("Failed to start audio:", err);
-      }
-
-      // Check for Linux virtual audio device (Linux only)
-      // Show banner if devices don't exist (regardless of saved settings)
-      if (detectedOS === "linux") {
-        try {
-          const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
-          setLinuxAudioStatus(status);
-          if (!status.exists) {
-            setShowLinuxAudioBanner(true);
-          }
-        } catch (err) {
-          console.error("Failed to check Linux virtual audio:", err);
-        }
       }
 
       // Check for updates (all platforms)
@@ -649,6 +689,30 @@ function App() {
     );
   };
 
+  // Re-query backend device lists. Used whenever a device picker opens and
+  // on window focus, so freshly connected Bluetooth/USB hardware shows up
+  // without forcing the user to restart the app.
+  const refreshDeviceLists = async () => {
+    try {
+      const [inputDeviceList, outputDeviceList] = await Promise.all([
+        invoke<DeviceInfo[]>("list_input_devices"),
+        invoke<DeviceInfo[]>("list_audio_devices"),
+      ]);
+      setInputDevices(inputDeviceList);
+      setOutputDevices(outputDeviceList);
+    } catch (err) {
+      console.error("Failed to refresh device lists:", err);
+    }
+  };
+
+  // Refresh device lists when the user switches back to the app — handles the
+  // "I just connected my BT headphones, alt-tabbed back" case.
+  useEffect(() => {
+    const onFocus = () => { void refreshDeviceLists(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
   // Setup Linux virtual audio
   const setupLinuxAudio = async () => {
     setLinuxSetupInProgress(true);
@@ -721,7 +785,56 @@ function App() {
       setLinuxSetupError(errorMsg);
       setLinuxSetupLog(prev => [...prev, `✗ Error: ${errorMsg}`]);
     } finally {
+      // After every setup attempt (success or failure), refresh the list of
+      // missing prerequisites so the UI can offer a one-click "Install" path
+      // if anything's still missing.
+      try {
+        const missing = await invoke<string[]>("list_linux_missing_prerequisites");
+        setLinuxMissingPkgs(missing);
+      } catch {
+        setLinuxMissingPkgs([]);
+      }
       setLinuxSetupInProgress(false);
+    }
+  };
+
+  // Auto-install missing audio prerequisites via pkexec (one polkit dialog,
+  // no terminal). Re-runs setupLinuxAudio automatically on success.
+  type InstallResult = { success: boolean; message: string; log: string[]; used_graphical_auth: boolean };
+  const installLinuxAudioPrereqs = async () => {
+    setLinuxInstallInProgress(true);
+    setLinuxSetupError(null);
+    setLinuxSetupLog(prev => [...prev, "", "Installing missing audio packages..."]);
+    try {
+      const result = await invoke<InstallResult>("install_linux_audio_prerequisites");
+      setLinuxSetupLog(prev => [...prev, ...result.log]);
+
+      if (!result.success) {
+        setLinuxSetupError(result.message);
+        if (!result.used_graphical_auth) {
+          setLinuxSetupLog(prev => [
+            ...prev,
+            "No graphical sudo available — run the manual command above in a terminal.",
+          ]);
+        }
+        return;
+      }
+
+      // Recheck what's missing, then auto-retry setup.
+      try {
+        const missing = await invoke<string[]>("list_linux_missing_prerequisites");
+        setLinuxMissingPkgs(missing);
+      } catch {
+        setLinuxMissingPkgs([]);
+      }
+      setLinuxSetupLog(prev => [...prev, "", "Retrying audio setup..."]);
+      await setupLinuxAudio();
+    } catch (err) {
+      const msg = String(err);
+      setLinuxSetupError(msg);
+      setLinuxSetupLog(prev => [...prev, `✗ Install error: ${msg}`]);
+    } finally {
+      setLinuxInstallInProgress(false);
     }
   };
 
@@ -752,10 +865,13 @@ function App() {
             onBack={() => setWizardStep(1)}
             onNext={() => setWizardStep(3)}
             onSetupLinuxAudio={currentOS === "linux" ? setupLinuxAudio : undefined}
+            onInstallLinuxAudioPrereqs={currentOS === "linux" ? installLinuxAudioPrereqs : undefined}
             linuxSetupInProgress={linuxSetupInProgress}
             linuxSetupComplete={linuxSetupComplete}
             linuxSetupError={linuxSetupError}
             linuxSetupLog={linuxSetupLog}
+            linuxMissingPkgs={linuxMissingPkgs}
+            linuxInstallInProgress={linuxInstallInProgress}
           />
         )}
         {wizardStep === 3 && (
@@ -812,6 +928,7 @@ function App() {
             onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
             onBack={() => setWizardStep(2)}
             onNext={() => setWizardStep(4)}
+            onRefreshDevices={refreshDeviceLists}
           />
         )}
         {wizardStep === 4 && (

@@ -364,6 +364,29 @@ fn setup_linux_virtual_audio() -> Result<linux_audio_setup::SetupResult, String>
 }
 
 #[tauri::command]
+fn remove_linux_virtual_audio() -> Result<(), String> {
+    linux_audio_setup::remove_virtual_audio_devices()
+}
+
+#[tauri::command]
+fn install_linux_audio_prerequisites() -> Result<linux_audio_setup::InstallResult, String> {
+    linux_audio_setup::install_audio_prerequisites()
+}
+
+#[tauri::command]
+fn list_linux_missing_prerequisites() -> Vec<String> {
+    linux_audio_setup::missing_prerequisites()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+#[tauri::command]
+fn dump_linux_audio_diagnostics() -> String {
+    linux_audio_setup::dump_audio_diagnostics()
+}
+
+#[tauri::command]
 fn mark_linux_audio_setup_complete(state: tauri::State<AppState>) -> Result<(), String> {
     let mut settings = state.settings.lock();
     settings.linux_audio_setup_completed = true;
@@ -454,6 +477,11 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Sweep any orphan virtual-audio modules from a crashed previous run
+            // before we touch anything else (Linux only — no-op elsewhere).
+            #[cfg(target_os = "linux")]
+            linux_audio_setup::cleanup_orphan_modules_at_startup();
+
             // Load settings from disk (or use defaults if not found)
             let settings = Settings::load();
             let cw_engine = CwEngine::new(settings.wpm);
@@ -481,15 +509,10 @@ fn main() {
 
             Ok(())
         })
-        .on_window_event(|_window, event| {
-            // Clean up Linux virtual audio devices when the app closes
-            if let tauri::WindowEvent::Destroyed = event {
-                #[cfg(target_os = "linux")]
-                {
-                    eprintln!("[app] Window destroyed, cleaning up virtual audio devices...");
-                    let _ = linux_audio_setup::cleanup_virtual_audio_devices();
-                }
-            }
+        .on_window_event(|_window, _event| {
+            // Virtual audio devices are persistent (loaded by the systemd user
+            // unit on every login), so we intentionally do nothing on window
+            // close. Users can remove devices explicitly from the UI.
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -509,6 +532,10 @@ fn main() {
             key_up,
             check_linux_virtual_audio,
             setup_linux_virtual_audio,
+            remove_linux_virtual_audio,
+            install_linux_audio_prerequisites,
+            list_linux_missing_prerequisites,
+            dump_linux_audio_diagnostics,
             mark_linux_audio_setup_complete,
             is_linux_audio_setup_completed,
             start_test_recording,
