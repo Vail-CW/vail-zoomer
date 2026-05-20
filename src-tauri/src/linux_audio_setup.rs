@@ -52,14 +52,98 @@ const PULSEAUDIO_NULL_SINK: &str =
 const PULSEAUDIO_REMAP_SOURCE: &str =
     "load-module module-remap-source master=VailZoomer.monitor source_name=VailZoomerMic source_properties=device.description=\"Vail_Zoomer_Microphone\"";
 
-/// Check if pactl command is available
+/// Distribution family — determines which package manager / package names to use.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DistroFamily {
+    Debian,   // apt, dpkg
+    Arch,     // pacman
+    Fedora,   // dnf, rpm
+    Suse,     // zypper
+    Other,
+}
+
+/// Detect distro family by reading /etc/os-release (ID and ID_LIKE).
+#[cfg(target_os = "linux")]
+fn detect_distro_family() -> DistroFamily {
+    let content = match std::fs::read_to_string("/etc/os-release") {
+        Ok(c) => c,
+        Err(_) => return DistroFamily::Other,
+    };
+    let mut id = String::new();
+    let mut id_like = String::new();
+    for line in content.lines() {
+        if let Some(v) = line.strip_prefix("ID=") {
+            id = v.trim().trim_matches('"').to_lowercase();
+        } else if let Some(v) = line.strip_prefix("ID_LIKE=") {
+            id_like = v.trim().trim_matches('"').to_lowercase();
+        }
+    }
+    let haystack = format!("{} {}", id, id_like);
+    if haystack.contains("debian") || haystack.contains("ubuntu") {
+        DistroFamily::Debian
+    } else if haystack.contains("arch") || haystack.contains("manjaro") {
+        DistroFamily::Arch
+    } else if haystack.contains("fedora") || haystack.contains("rhel") || haystack.contains("centos") {
+        DistroFamily::Fedora
+    } else if haystack.contains("suse") {
+        DistroFamily::Suse
+    } else {
+        DistroFamily::Other
+    }
+}
+
+/// Check whether a binary is on PATH.
+#[cfg(target_os = "linux")]
+fn has_command(name: &str) -> bool {
+    Command::new("sh")
+        .args(["-c", &format!("command -v {} >/dev/null 2>&1", name)])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Per-distro install hint for missing packages, formatted for the UI.
+#[cfg(target_os = "linux")]
+fn install_hint_for(capability: &str) -> String {
+    // capability is one of: "pactl", "pipewire-alsa", "alsa-pulse-plugin"
+    let (apt, pacman, dnf, zypper) = match capability {
+        "pactl" => (
+            "pulseaudio-utils",
+            "libpulse",
+            "pulseaudio-utils",
+            "pulseaudio-utils",
+        ),
+        "pipewire-alsa" => (
+            "pipewire-alsa",
+            "pipewire-alsa",
+            "pipewire-alsa",
+            "pipewire-alsa",
+        ),
+        "alsa-pulse-plugin" => (
+            "libasound2-plugins",
+            "alsa-plugins",
+            "alsa-plugins-pulseaudio",
+            "alsa-plugins-pulse",
+        ),
+        _ => return format!("Please install support for: {}", capability),
+    };
+    match detect_distro_family() {
+        DistroFamily::Debian => format!("sudo apt install {}", apt),
+        DistroFamily::Arch => format!("sudo pacman -S {}", pacman),
+        DistroFamily::Fedora => format!("sudo dnf install {}", dnf),
+        DistroFamily::Suse => format!("sudo zypper install {}", zypper),
+        DistroFamily::Other => format!(
+            "Install equivalent of: apt:{} / pacman:{} / dnf:{}",
+            apt, pacman, dnf
+        ),
+    }
+}
+
+/// Check if pactl command is available.
 #[cfg(target_os = "linux")]
 pub fn is_pactl_installed() -> bool {
-    Command::new("which")
-        .arg("pactl")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    has_command("pactl")
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -67,117 +151,34 @@ pub fn is_pactl_installed() -> bool {
     false
 }
 
-/// Install pulseaudio-utils package (provides pactl)
-#[cfg(target_os = "linux")]
-fn install_pactl() -> Result<(), String> {
-    eprintln!("[linux_audio] Attempting to install pulseaudio-utils...");
-
-    // Try pkexec for graphical sudo prompt
-    let result = Command::new("pkexec")
-        .args(["apt-get", "install", "-y", "pulseaudio-utils"])
-        .output();
-
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                eprintln!("[linux_audio] Successfully installed pulseaudio-utils");
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Check if user cancelled the auth dialog
-                if stderr.contains("dismissed") || stderr.contains("cancelled") {
-                    Err("Installation cancelled. Please install manually: sudo apt install pulseaudio-utils".to_string())
-                } else {
-                    Err(format!("Failed to install pulseaudio-utils: {}", stderr))
-                }
-            }
-        }
-        Err(e) => {
-            Err(format!("Failed to run installer: {}. Please install manually: sudo apt install pulseaudio-utils", e))
-        }
-    }
-}
-
-/// Check if pipewire-alsa is installed (needed for ALSA apps to see PipeWire devices)
-#[cfg(target_os = "linux")]
-fn is_pipewire_alsa_installed() -> bool {
-    Command::new("dpkg")
-        .args(["-s", "pipewire-alsa"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// Install pipewire-alsa package (bridges PipeWire devices to ALSA)
-#[cfg(target_os = "linux")]
-fn install_pipewire_alsa() -> Result<(), String> {
-    eprintln!("[linux_audio] Attempting to install pipewire-alsa...");
-
-    // Try pkexec for graphical sudo prompt
-    let result = Command::new("pkexec")
-        .args(["apt-get", "install", "-y", "pipewire-alsa"])
-        .output();
-
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                eprintln!("[linux_audio] Successfully installed pipewire-alsa");
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Check if user cancelled the auth dialog
-                if stderr.contains("dismissed") || stderr.contains("cancelled") {
-                    Err("Installation cancelled. Please install manually: sudo apt install pipewire-alsa".to_string())
-                } else {
-                    Err(format!("Failed to install pipewire-alsa: {}", stderr))
-                }
-            }
-        }
-        Err(e) => {
-            Err(format!("Failed to run installer: {}. Please install manually: sudo apt install pipewire-alsa", e))
-        }
-    }
-}
-
-/// Check if libasound2-plugins is installed (needed for ALSA pulse plugin)
+/// Check whether the ALSA→Pulse plugin is present by looking for the actual library
+/// in any of the standard library paths used by Debian, Arch, and Fedora.
 #[cfg(target_os = "linux")]
 fn is_alsa_pulse_plugin_installed() -> bool {
-    Command::new("dpkg")
-        .args(["-s", "libasound2-plugins"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    const CANDIDATES: &[&str] = &[
+        "/usr/lib/alsa-lib/libasound_module_pcm_pulse.so",
+        "/usr/lib64/alsa-lib/libasound_module_pcm_pulse.so",
+        "/usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_pulse.so",
+        "/usr/lib/aarch64-linux-gnu/alsa-lib/libasound_module_pcm_pulse.so",
+    ];
+    CANDIDATES.iter().any(|p| std::path::Path::new(p).exists())
 }
 
-/// Install libasound2-plugins package (provides ALSA pulse plugin for PipeWire/PulseAudio integration)
+/// Check whether pipewire-alsa is providing the ALSA bridge.
+/// pipewire-alsa drops a config file into /usr/share/alsa/alsa.conf.d/ — that's
+/// the most distro-agnostic signal.
 #[cfg(target_os = "linux")]
-fn install_alsa_pulse_plugin() -> Result<(), String> {
-    eprintln!("[linux_audio] Attempting to install libasound2-plugins...");
-
-    // Try pkexec for graphical sudo prompt
-    let result = Command::new("pkexec")
-        .args(["apt-get", "install", "-y", "libasound2-plugins"])
-        .output();
-
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                eprintln!("[linux_audio] Successfully installed libasound2-plugins");
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Check if user cancelled the auth dialog
-                if stderr.contains("dismissed") || stderr.contains("cancelled") {
-                    Err("Installation cancelled. Please install manually: sudo apt install libasound2-plugins".to_string())
-                } else {
-                    Err(format!("Failed to install libasound2-plugins: {}", stderr))
-                }
+fn is_pipewire_alsa_installed() -> bool {
+    let conf_dir = std::path::Path::new("/usr/share/alsa/alsa.conf.d");
+    if let Ok(entries) = std::fs::read_dir(conf_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.contains("pipewire") {
+                return true;
             }
         }
-        Err(e) => {
-            Err(format!("Failed to run installer: {}. Please install manually: sudo apt install libasound2-plugins", e))
-        }
     }
+    false
 }
 
 /// Create ALSA configuration for VailZoomer devices (both output and input)
@@ -368,12 +369,16 @@ fn setup_pipewire() -> Result<SetupResult, String> {
 
     log.push("Starting PipeWire virtual audio setup...".to_string());
 
-    // Ensure pipewire-alsa is installed (required for ALSA apps like cpal to see PipeWire devices)
+    // Verify pipewire-alsa is providing the ALSA bridge (required for ALSA apps like cpal
+    // to see PipeWire devices). We no longer install packages from inside the app — the
+    // pkexec apt-get flow was Debian-only and gave bad UX on Arch/Fedora/etc.
     if !is_pipewire_alsa_installed() {
-        log.push("Installing pipewire-alsa package...".to_string());
-        eprintln!("[linux_audio] pipewire-alsa not installed, installing...");
-        install_pipewire_alsa()?;
-        log.push("✓ pipewire-alsa installed".to_string());
+        let hint = install_hint_for("pipewire-alsa");
+        log.push(format!("✗ pipewire-alsa not detected. Install it with: {}", hint));
+        return Err(format!(
+            "pipewire-alsa is required so other apps can see VailZoomer's virtual devices. Install it with: {}",
+            hint
+        ));
     } else {
         log.push("✓ pipewire-alsa already installed".to_string());
     }
@@ -454,14 +459,15 @@ fn setup_pipewire() -> Result<SetupResult, String> {
         }
     }
 
-    // Ensure libasound2-plugins is installed (required for ALSA pulse plugin)
+    // Verify the ALSA pulse plugin is present (lets ALSA-only apps reach PipeWire/Pulse).
     if !is_alsa_pulse_plugin_installed() {
-        log.push("Installing libasound2-plugins package...".to_string());
-        eprintln!("[linux_audio] libasound2-plugins not installed, installing...");
-        install_alsa_pulse_plugin()?;
-        log.push("✓ libasound2-plugins installed".to_string());
+        let hint = install_hint_for("alsa-pulse-plugin");
+        log.push(format!(
+            "⚠ ALSA pulse plugin not detected — some ALSA-only apps may not see VailZoomer. Install it with: {}",
+            hint
+        ));
     } else {
-        log.push("✓ libasound2-plugins already installed".to_string());
+        log.push("✓ ALSA pulse plugin present".to_string());
     }
 
     // Create ALSA configuration so apps like Audacity and Zoom can see VailZoomer
@@ -593,15 +599,15 @@ fn setup_pulseaudio() -> Result<SetupResult, String> {
 /// Main setup function that detects audio system and runs appropriate setup
 #[cfg(target_os = "linux")]
 pub fn setup_virtual_audio_device() -> Result<SetupResult, String> {
-    // First, ensure pactl is installed (needed for verification)
+    // pactl is the only hard prerequisite: we use it to create the virtual sink/source
+    // and to verify them. Surface a per-distro install hint instead of trying to install
+    // from the app (the old apt-get flow was Debian-only).
     if !is_pactl_installed() {
-        eprintln!("[linux_audio] pactl not found, attempting to install...");
-        install_pactl()?;
-
-        // Verify it's now installed
-        if !is_pactl_installed() {
-            return Err("Failed to install pulseaudio-utils. Please install manually: sudo apt install pulseaudio-utils".to_string());
-        }
+        let hint = install_hint_for("pactl");
+        return Err(format!(
+            "`pactl` not found. It's required to create the virtual audio devices. Install it with: {}",
+            hint
+        ));
     }
 
     let audio_system = detect_audio_system();

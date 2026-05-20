@@ -506,8 +506,12 @@ function App() {
       setTestRecordingState("playing");
       setTestPlaybackProgress(0);
 
-      // Poll for playback progress
-      testRecordingIntervalRef.current = window.setInterval(async () => {
+      // Poll for playback progress.
+      // IMPORTANT: capture the interval ID in a closure-local so the poll only
+      // clears ITSELF, not whatever else might have been written to the shared
+      // ref (e.g. a later record-cycle's countdown interval).
+      let pollId: number = 0;
+      pollId = window.setInterval(async () => {
         try {
           const state = await invoke<{
             is_recording: boolean;
@@ -521,17 +525,19 @@ function App() {
           setTestPlaybackProgress(state.playback_progress);
 
           if (!state.is_playing) {
-            // Playback finished
-            if (testRecordingIntervalRef.current) {
-              clearInterval(testRecordingIntervalRef.current);
+            clearInterval(pollId);
+            if (testRecordingIntervalRef.current === pollId) {
               testRecordingIntervalRef.current = null;
             }
-            setTestRecordingState("idle");
+            // Only fall back to idle if we're still showing playback —
+            // never clobber a fresh "recording" state from a subsequent click.
+            setTestRecordingState((prev) => (prev === "playing" ? "idle" : prev));
           }
         } catch (err) {
           console.error("Failed to get test recording state:", err);
         }
       }, 100);
+      testRecordingIntervalRef.current = pollId;
     } catch (err) {
       console.error("Failed to play test recording:", err);
       setTestRecordingState("idle");

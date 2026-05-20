@@ -137,14 +137,36 @@ By default, if you send to BlackHole, you won't hear the sidetone locally. To he
 
 Linux uses software-based virtual audio devices through PulseAudio or PipeWire. **Vail Zoomer can set this up automatically for you.**
 
+#### Prerequisites (one-time, per distro)
+
+Vail Zoomer needs `pactl` plus the `pipewire-alsa` bridge and the ALSA pulse plugin. Install them with your distro's package manager:
+
+- **Debian / Ubuntu / Pop!_OS / Mint:**
+  ```bash
+  sudo apt install pulseaudio-utils pipewire-alsa libasound2-plugins
+  ```
+- **Arch / Manjaro / EndeavourOS:**
+  ```bash
+  sudo pacman -S libpulse pipewire-alsa alsa-plugins
+  ```
+- **Fedora / RHEL / Rocky:**
+  ```bash
+  sudo dnf install pulseaudio-utils pipewire-alsa alsa-plugins-pulseaudio
+  ```
+- **openSUSE:**
+  ```bash
+  sudo zypper install pulseaudio-utils pipewire-alsa alsa-plugins-pulse
+  ```
+
+> Most modern distros already ship these by default. If Vail Zoomer's setup screen shows a "missing package" error, the message will include the exact command for your distro.
+
 #### Automatic Setup (Recommended)
 
 1. **Launch Vail Zoomer**
 2. If no virtual audio device is detected, you'll see a blue banner at the top: "Virtual audio device not found"
 3. Click **"Setup Virtual Audio"**
-4. If prompted, enter your admin password (this is only needed if `pactl` isn't installed)
-5. The app will automatically detect your audio system (PipeWire or PulseAudio) and create the virtual device
-6. Once complete, "Vail Zoomer" will appear in your output device list
+4. The app will detect your audio system (PipeWire or PulseAudio) and create the virtual devices via `pactl`
+5. Once complete, "Vail Zoomer" will appear in your output device list
 
 You can also trigger this setup anytime from the **Audio Routing** section at the bottom (look for "Linux Virtual Audio Setup").
 
@@ -223,7 +245,7 @@ If you see "VailZoomerMic", you're all set!
 - **Automatic setup fails**: Try the manual setup instructions above
 - **No virtual device after setup**: Log out and back in, or restart your computer
 - **AppImage won't run**: Make it executable first: `chmod +x vail-zoomer*.AppImage`
-- **MIDI not detected**: Install ALSA MIDI support: `sudo apt install libasound2-plugins`
+- **MIDI not detected**: Install ALSA MIDI support — `sudo apt install libasound2-plugins` (Debian/Ubuntu), `sudo pacman -S alsa-plugins` (Arch/Manjaro), or `sudo dnf install alsa-plugins-pulseaudio` (Fedora)
 - **Zoom doesn't show the virtual microphone**: Edit `~/.config/zoomus.conf` and set `system.audio.type=default` (instead of `alsa`), then restart Zoom
 
 ---
@@ -394,7 +416,9 @@ chmod +x vail-zoomer*.AppImage
 - Platform-specific requirements:
   - **Windows**: Visual Studio Build Tools with C++ workload
   - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
-  - **Linux**: `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev`
+  - **Linux** (Debian/Ubuntu): `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev`
+  - **Linux** (Arch/Manjaro): `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget openssl gtk3 libayatana-appindicator librsvg alsa-lib`
+  - **Linux** (Fedora/RHEL): `sudo dnf install webkit2gtk4.1-devel openssl-devel gtk3-devel libayatana-appindicator-gtk3-devel librsvg2-devel alsa-lib-devel @development-tools`
 
 ### Build Steps
 ```bash

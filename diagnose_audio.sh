@@ -1,5 +1,5 @@
 #!/bin/bash
-# Audio Diagnostics for Vail Zoomer on Ubuntu 25.10
+# Audio Diagnostics for Vail Zoomer (Linux, distro-agnostic)
 
 echo "=== Audio System Diagnostics ==="
 echo ""
@@ -47,7 +47,23 @@ fi
 echo ""
 
 echo "8. Installed Audio Packages:"
-dpkg -l | grep -E "pipewire-alsa|pulseaudio-utils|libasound2" | awk '{print $2, $3}'
+if command -v dpkg >/dev/null 2>&1; then
+    dpkg -l 2>/dev/null | grep -E "pipewire-alsa|pulseaudio-utils|libasound2" | awk '{print $2, $3}'
+elif command -v pacman >/dev/null 2>&1; then
+    pacman -Q 2>/dev/null | grep -E "^(pipewire-alsa|libpulse|alsa-plugins|alsa-lib) "
+elif command -v rpm >/dev/null 2>&1; then
+    rpm -qa 2>/dev/null | grep -E "^(pipewire-alsa|pulseaudio-utils|alsa-plugins)"
+else
+    echo "  (unknown package manager — checked: dpkg, pacman, rpm)"
+fi
+echo ""
+
+echo "9. ALSA pulse plugin file (cross-distro check):"
+for p in /usr/lib/alsa-lib/libasound_module_pcm_pulse.so \
+         /usr/lib64/alsa-lib/libasound_module_pcm_pulse.so \
+         /usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_pulse.so; do
+    if [ -f "$p" ]; then echo "✓ $p"; fi
+done
 echo ""
 
 echo "=== End Diagnostics ==="

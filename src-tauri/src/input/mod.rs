@@ -186,7 +186,8 @@ impl MidiHandler {
         }
     }
 
-    /// Send sidetone note to Vail adapter (CC2)
+    /// Send sidetone note to Vail adapter (CC2). The adapter expects a raw
+    /// MIDI note number (0-127) where 69 = A4 = 440 Hz.
     pub fn send_sidetone_note(&mut self, note: u8) -> Result<(), String> {
         if let Some(ref mut conn) = self.output_connection {
             let message = [0xB0, vail::CC_SIDETONE_NOTE, note.min(127)];
@@ -194,6 +195,16 @@ impl MidiHandler {
         } else {
             Err("MIDI output not connected".to_string())
         }
+    }
+
+    /// Set the adapter's hardware sidetone frequency in Hz. The Vail adapter's
+    /// MIDI protocol only accepts a 7-bit MIDI note number, so frequencies are
+    /// quantized to the nearest semitone.
+    pub fn send_sidetone_frequency_hz(&mut self, hz: f32) -> Result<(), String> {
+        // note = 69 + 12 * log2(hz / 440)
+        let note = (69.0 + 12.0 * (hz.max(1.0) / 440.0).log2()).round();
+        let note = note.clamp(0.0, 127.0) as u8;
+        self.send_sidetone_note(note)
     }
 
     /// Try to receive a pending MIDI event (non-blocking)
