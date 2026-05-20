@@ -15,6 +15,10 @@ interface BigSelectProps {
       re-querying device lists so hot-plugged hardware (BT mic, USB headset)
       shows up without restarting the app. */
   onOpen?: () => void;
+  /** When true, the empty-value placeholder option is not rendered. Used by
+      pickers that must force a real selection (e.g. local speakers) so the
+      app never silently falls through to the OS default. */
+  hidePlaceholder?: boolean;
 }
 
 export function BigSelect({
@@ -25,6 +29,7 @@ export function BigSelect({
   label,
   className = "",
   onOpen,
+  hidePlaceholder = false,
 }: BigSelectProps) {
   return (
     <div className={className}>
@@ -40,7 +45,7 @@ export function BigSelect({
         onFocus={onOpen}
         className="w-full bg-gray-700 text-white text-lg px-4 py-3 rounded-xl border-2 border-gray-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
       >
-        <option value="">{placeholder}</option>
+        {!hidePlaceholder && <option value="">{placeholder}</option>}
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}

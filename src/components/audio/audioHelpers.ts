@@ -5,6 +5,22 @@ export interface DeviceInfo {
 
 export type OSType = "windows" | "macos" | "linux";
 
+/** Hardware identifiers that Vail Adapters surface as MIDI device names. */
+const VAIL_MIDI_PATTERNS = ["vail", "xiao", "seeed", "samd21", "qt py", "qtpy"];
+
+export const isVailMidiDevice = (rawName: string): boolean => {
+  const n = rawName.toLowerCase();
+  return VAIL_MIDI_PATTERNS.some((p) => n.includes(p));
+};
+
+/**
+ * Friendly label for a MIDI device. Vail Adapter hardware ships as a
+ * Seeed XIAO / QT Py / SAMD21 board — non-technical users shouldn't ever
+ * see those raw board names, so we collapse them all to "Vail Adapter".
+ */
+export const friendlyMidiName = (rawName: string): string =>
+  isVailMidiDevice(rawName) ? "Vail Adapter" : rawName;
+
 /**
  * The Vail-Zoomer-managed loopback output (BlackHole on macOS, VB-Cable on
  * Windows, VailZoomer on Linux) is what gets routed to the video app —

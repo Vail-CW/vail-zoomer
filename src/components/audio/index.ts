@@ -7,6 +7,8 @@ export {
   isVirtualInput,
   isRecommendedVirtualOutput,
   getVirtualOutputStatus,
+  isVailMidiDevice,
+  friendlyMidiName,
 } from "./audioHelpers";
 export type {
   DeviceInfo,

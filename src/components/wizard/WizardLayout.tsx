@@ -37,6 +37,17 @@ export function WizardLayout({
         <h1 className="text-2xl font-bold text-amber-400">Vail Zoomer</h1>
       </header>
 
+      {/* Persistent headphones reminder — runs the length of the wizard so
+          new users see it before they ever press a key. */}
+      <div className="flex items-center gap-2 px-3 py-1.5 mb-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex-shrink-0">
+        <svg className="w-4 h-4 text-amber-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 3a9 9 0 00-9 9v7a2 2 0 002 2h3v-8H5v-1a7 7 0 0114 0v1h-3v8h3a2 2 0 002-2v-7a9 9 0 00-9-9z" />
+        </svg>
+        <span className="text-sm text-amber-100">
+          <strong>Wear headphones</strong> while setting up — stops your mic catching the tone and prevents feedback.
+        </span>
+      </div>
+
       {/* Scrollable area for all content including navigation */}
       <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
         {/* Step indicator */}

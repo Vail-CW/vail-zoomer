@@ -25,12 +25,20 @@ const KEYER_TYPES = [
   { value: "Keyahead", label: "Keyahead", description: "Buffers next element while sending" },
 ];
 
-const VAIL_PATTERNS = ["vail", "xiao", "seeed", "samd21", "qt py", "qtpy"];
+import { isVailMidiDevice as matchesVail } from "../audio/audioHelpers";
 
-const matchesVail = (name: string) => {
-  const n = name.toLowerCase();
-  return VAIL_PATTERNS.some((p) => n.includes(p));
-};
+// Friendly label: collapse Vail adapter hardware names ("Seeeduino XIAO", "QT Py")
+// down to "Vail Adapter", numbering them if more than one is present.
+function makeFriendlyLabeler(devices: string[]) {
+  const vailMatches = devices.filter(matchesVail);
+  const vailIdx = new Map<string, number>();
+  vailMatches.forEach((d, i) => vailIdx.set(d, i + 1));
+  return (device: string) => {
+    if (!matchesVail(device)) return device;
+    if (vailMatches.length <= 1) return "Vail Adapter";
+    return `Vail Adapter ${vailIdx.get(device)}`;
+  };
+}
 
 interface SettingsSheetProps {
   // Devices
@@ -117,6 +125,7 @@ export function SettingsSheet({
   };
   const vailMidiDevices = midiDevices.filter((d) => matchesVail(d) && !isLoopbackMidi(d));
   const otherMidiDevices = midiDevices.filter((d) => !matchesVail(d) && !isLoopbackMidi(d));
+  const friendlyDeviceLabel = makeFriendlyLabeler(midiDevices);
 
   // For the output picker we keep virtual cables visible (that's what should
   // feed Zoom) and tag the recommended one so the user can spot it at a glance.
@@ -152,7 +161,7 @@ export function SettingsSheet({
             <div className="w-2 h-2 rounded-full bg-gray-900" />
           )}
         </div>
-        <span className="text-base">{device}</span>
+        <span className="text-base">{friendlyDeviceLabel(device)}</span>
       </div>
     </button>
   );
@@ -351,10 +360,10 @@ export function SettingsSheet({
             <div className="flex items-center justify-between">
               <div className="flex-1 pr-3">
                 <span className="text-lg text-gray-200 font-medium">
-                  Mute my voice while keying
+                  Auto-mute mic while sending
                 </span>
                 <p className="text-sm text-gray-300">
-                  Stops your microphone picking up the sidetone while you send.
+                  Mutes your microphone the instant you key down and unmutes it the moment you stop — prevents your sidetone bouncing back as feedback.
                 </p>
               </div>
               <button

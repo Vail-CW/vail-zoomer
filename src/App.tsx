@@ -11,6 +11,7 @@ import { Step4VideoAppTips } from "./components/steps/Step4VideoAppTips";
 import { OperationalView } from "./components/main/OperationalView";
 import { SettingsSheet } from "./components/main/SettingsSheet";
 import { HelpModal } from "./components/main/HelpModal";
+import { TroubleshootingModal } from "./components/main/TroubleshootingModal";
 import { BigButton } from "./components/shared/BigButton";
 
 // Device info from backend (friendly name + internal name for selection)
@@ -58,8 +59,13 @@ type OSType = "windows" | "macos" | "linux";
 type WizardStep = 1 | 2 | 3 | 4;
 type AppMode = "wizard" | "main" | "video-tips";
 
-// Local storage key for wizard completion - version specific
-const WIZARD_VERSION = "v2";
+// Local storage key for wizard completion - version specific.
+// Bump this whenever the setup/wizard semantics change in a way that may have
+// left earlier users with a mangled audio configuration (orphan PulseAudio
+// modules, stale device picks, etc.). Anyone whose stored key is older will
+// be sent through the wizard once on next launch so Step 2's setup script
+// can sweep the slate clean.
+const WIZARD_VERSION = "v3";
 const WIZARD_COMPLETE_KEY = `vail-zoomer-wizard-complete-${WIZARD_VERSION}`;
 
 function App() {
@@ -76,6 +82,7 @@ function App() {
   const [selectedMidiDevice, setSelectedMidiDevice] = useState<string | null>(null);
   const [audioStarted, setAudioStarted] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showTroubleshoot, setShowTroubleshoot] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [currentOS, setCurrentOS] = useState<OSType>("windows");
 
@@ -137,24 +144,33 @@ function App() {
   const savedMicVolumeRef = useRef<number>(1.0);
 
   // Check if wizard was completed for this version
-  // On Linux, always show wizard since virtual audio devices are created fresh each startup
+  // On Linux, the virtual audio modules are now re-loaded on every login by the
+  // user systemd unit installed in Step 2, so the wizard only needs to run again
+  // if those modules are missing (fresh install, autostart disabled, etc.).
   useEffect(() => {
     const checkWizardCompletion = async () => {
       const completed = localStorage.getItem(WIZARD_COMPLETE_KEY) === "true";
       if (!completed) return;
 
-      // On Linux, always go through wizard (devices are ephemeral)
-      // On other platforms, skip to main if wizard was completed
       try {
         const os = await platform();
         if (os === "linux") {
-          // Stay in wizard mode at step 1
+          // Skip the wizard only if the virtual audio sink is already loaded.
+          // Otherwise we still need Step 2 to recreate it.
+          try {
+            const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
+            if (status.exists) {
+              setAppMode("main");
+            }
+          } catch {
+            // Couldn't query — leave in wizard so Step 2 can sort it out.
+          }
           return;
         }
-        // Not Linux, safe to skip wizard
+        // Non-Linux: localStorage flag is sufficient.
         setAppMode("main");
       } catch {
-        // On error, default to skipping wizard if it was completed
+        // On platform-detect error, default to skipping wizard if it was completed
         setAppMode("main");
       }
     };
@@ -310,7 +326,12 @@ function App() {
         try {
           const status = await invoke<VirtualAudioStatus>("check_linux_virtual_audio");
           setLinuxAudioStatus(status);
-          if (!status.exists) {
+          if (status.exists) {
+            // Sink already loaded from a previous run — don't re-run setup_linux_virtual_audio
+            // when the user lands on Step 2, since reloading the PulseAudio module
+            // briefly redirects sidetone to default speakers and causes a feedback pop.
+            setLinuxSetupComplete(true);
+          } else {
             const missing = await invoke<string[]>("list_linux_missing_prerequisites").catch(() => [] as string[]);
             setLinuxMissingPkgs(missing);
             if (missing.length > 0) {
@@ -441,7 +462,11 @@ function App() {
         // If devices changed and audio is running, restart audio to pick up new default device
         if ((inputChanged || outputChanged) && audioStarted) {
           console.log("[audio] Device list changed, restarting audio...");
+          const savedMicVol = settingsRef.current.mic_volume;
+          const savedSidetoneVol = settingsRef.current.sidetone_volume;
           try {
+            await invoke("set_mic_volume", { volume: 0 }).catch(() => {});
+            await invoke("set_sidetone_volume", { volume: 0 }).catch(() => {});
             await invoke("stop_audio");
             // Give CoreAudio time to fully release the device before re-opening
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -452,6 +477,10 @@ function App() {
             });
           } catch (err) {
             console.error("[audio] Failed to restart audio after device change:", err);
+          } finally {
+            await new Promise(resolve => setTimeout(resolve, 150));
+            await invoke("set_mic_volume", { volume: savedMicVol }).catch(() => {});
+            await invoke("set_sidetone_volume", { volume: savedSidetoneVol }).catch(() => {});
           }
         }
       } catch {
@@ -622,7 +651,14 @@ function App() {
     inputDevice: string | null,
     localDevice?: string | null
   ) => {
+    // Mute mic + sidetone across the swap so the brief window when the engine
+    // is between devices can't produce an acoustic feedback loop (mic →
+    // default speakers while the virtual cable is briefly absent).
+    const savedMicVol = settingsRef.current.mic_volume;
+    const savedSidetoneVol = settingsRef.current.sidetone_volume;
     try {
+      await invoke("set_mic_volume", { volume: 0 }).catch(() => {});
+      await invoke("set_sidetone_volume", { volume: 0 }).catch(() => {});
       await invoke("stop_audio");
       // Give CoreAudio time to fully release the device before re-opening
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -640,6 +676,11 @@ function App() {
     } catch (err) {
       console.error("Failed to restart audio:", err);
       setAudioStarted(false);
+    } finally {
+      // Settle for one render cycle, then restore the user's volumes.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await invoke("set_mic_volume", { volume: savedMicVol }).catch(() => {});
+      await invoke("set_sidetone_volume", { volume: savedSidetoneVol }).catch(() => {});
     }
   };
 
@@ -782,7 +823,10 @@ function App() {
 
         // Restart audio with the new VailZoomer device to ensure proper initialization
         setLinuxSetupLog(prev => [...prev, "Initializing audio routing..."]);
+        const savedSidetoneVol = settingsRef.current.sidetone_volume;
         try {
+          await invoke("set_mic_volume", { volume: 0 }).catch(() => {});
+          await invoke("set_sidetone_volume", { volume: 0 }).catch(() => {});
           await invoke("stop_audio");
           await invoke("start_audio_with_all_devices", {
             outputDevice: vailZoomerDevice.internal_name,
@@ -793,6 +837,11 @@ function App() {
         } catch (err) {
           console.error("Failed to restart audio after setup:", err);
           setLinuxSetupLog(prev => [...prev, `Warning: Audio restart failed: ${err}`]);
+        } finally {
+          await new Promise(resolve => setTimeout(resolve, 150));
+          // Restore using newMicVolume (the value we just set above), then sidetone
+          await invoke("set_mic_volume", { volume: newMicVolume }).catch(() => {});
+          await invoke("set_sidetone_volume", { volume: savedSidetoneVol }).catch(() => {});
         }
       } else {
         setLinuxSetupLog(prev => [...prev, "Warning: VailZoomer device not found in device list"]);
@@ -1001,9 +1050,21 @@ function App() {
         onClearCwText={clearText}
         micLevel={micLevel}
         outputLevel={outputLevel}
+        micDucking={settings.mic_ducking}
+        onMicDuckingChange={(enabled) => updateSettings({ mic_ducking: enabled })}
+        sidetoneRoute={settings.sidetone_route}
+        selectedLocalDevice={selectedLocalDevice}
+        outputDevices={outputDevices}
+        keyerType={settings.keyer_type}
+        wpm={settings.wpm}
+        sidetoneFrequency={settings.sidetone_frequency}
+        onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
+        onWpmChange={(wpm) => updateSettings({ wpm })}
+        onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}
         onOpenVideoTips={() => setAppMode("video-tips")}
         onOpenSettings={() => setShowSettings(true)}
         onOpenHelp={() => setShowHelp(true)}
+        onOpenTroubleshoot={() => setShowTroubleshoot(true)}
         testRecordingState={testRecordingState}
         testRecordingCountdown={testRecordingCountdown}
         testPlaybackProgress={testPlaybackProgress}
@@ -1072,6 +1133,12 @@ function App() {
       )}
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showTroubleshoot && (
+        <TroubleshootingModal
+          onClose={() => setShowTroubleshoot(false)}
+          onOpenSettings={() => setShowSettings(true)}
+        />
+      )}
     </>
   );
 }
