@@ -28,7 +28,7 @@ Download the latest release for your operating system from the [Releases](https:
 - **Windows**: `Vail.Zoomer_x.x.x_x64-setup.exe` or portable `.msi`
 - **macOS (Apple Silicon)**: `Vail.Zoomer_x.x.x_aarch64.dmg`
 - **macOS (Intel)**: `Vail.Zoomer_x.x.x_x64.dmg`
-- **Linux**: `vail-zoomer_x.x.x_amd64.AppImage` or `.deb`
+- **Linux**: `vail-zoomer_x.x.x_amd64.AppImage`, `.deb`, or `.rpm`
 
 > **Security Note**: If you see a security warning when opening the app, see the [First Launch Security Warnings](#first-launch-security-warnings) section below.
 
@@ -85,6 +85,10 @@ If you see both devices, you're ready!
 
 **BlackHole** is a free, open-source virtual audio driver for macOS. Works on both Intel and Apple Silicon Macs.
 
+> Vail Zoomer **auto-detects BlackHole** once it's installed — the Step 3 setup wizard shows green when BlackHole is found and selects it as your output device automatically. You only need to install BlackHole (below); the app handles the rest, including hot-plugging Bluetooth headphones mid-call.
+
+> On first launch macOS will prompt for **microphone access** — click **Allow**. If you dismissed it, re-enable under System Settings → Privacy & Security → Microphone.
+
 #### Option A: Install with Homebrew (if you have it)
 Open Terminal (press Cmd+Space, type "Terminal", press Enter) and run:
 ```bash
@@ -135,118 +139,25 @@ By default, if you send to BlackHole, you won't hear the sidetone locally. To he
 
 ### Linux: Automatic Virtual Audio Setup
 
-Linux uses software-based virtual audio devices through PulseAudio or PipeWire. **Vail Zoomer can set this up automatically for you.**
+**Vail Zoomer handles the entire virtual audio setup for you in-app**, on any distro. There are no manual config files to write and no per-distro instructions to follow.
 
-#### Prerequisites (one-time, per distro)
-
-Vail Zoomer needs `pactl` plus the `pipewire-alsa` bridge and the ALSA pulse plugin. Install them with your distro's package manager:
-
-- **Debian / Ubuntu / Pop!_OS / Mint:**
-  ```bash
-  sudo apt install pulseaudio-utils pipewire-alsa libasound2-plugins
-  ```
-- **Arch / Manjaro / EndeavourOS:**
-  ```bash
-  sudo pacman -S libpulse pipewire-alsa alsa-plugins
-  ```
-- **Fedora / RHEL / Rocky:**
-  ```bash
-  sudo dnf install pulseaudio-utils pipewire-alsa alsa-plugins-pulseaudio
-  ```
-- **openSUSE:**
-  ```bash
-  sudo zypper install pulseaudio-utils pipewire-alsa alsa-plugins-pulse
-  ```
-
-> Most modern distros already ship these by default. If Vail Zoomer's setup screen shows a "missing package" error, the message will include the exact command for your distro.
-
-#### Automatic Setup (Recommended)
+#### How it works
 
 1. **Launch Vail Zoomer**
-2. If no virtual audio device is detected, you'll see a blue banner at the top: "Virtual audio device not found"
-3. Click **"Setup Virtual Audio"**
-4. The app will detect your audio system (PipeWire or PulseAudio) and create the virtual devices via `pactl`
-5. Once complete, "Vail Zoomer" will appear in your output device list
+2. If no virtual audio device is detected, you'll see a blue banner: "Virtual audio device not found" — click **"Setup Virtual Audio"**
+3. The app detects your distro (Debian/Arch/Fedora/SUSE/etc.) and your audio system (PipeWire or PulseAudio), then creates the virtual devices for you
+4. If any system package is missing, the app shows the exact install command for *your* distro (e.g., `sudo pacman -S pipewire-alsa` on Arch, `sudo apt install pulseaudio-utils` on Ubuntu)
+5. Once complete, **VailZoomer** (output) and **VailZoomerMic** (the mic Zoom sees) appear in your audio devices, and persist across reboots
 
-You can also trigger this setup anytime from the **Audio Routing** section at the bottom (look for "Linux Virtual Audio Setup").
+You can re-run the setup anytime from the **Audio Routing** section at the bottom of the app.
 
-#### What Gets Created
+#### Troubleshooting Linux
 
-The automatic setup creates:
-- **VailZoomer** - The output device you'll select in Vail Zoomer
-- **VailZoomerMic** - The microphone input that Zoom will see
-
-The devices persist across reboots.
-
----
-
-#### Manual Setup (Alternative)
-
-If the automatic setup doesn't work, you can set up the virtual device manually.
-
-**Step 1: Check which audio system you have**
-
-Open a terminal (press Ctrl+Alt+T) and run:
-```bash
-pactl info | grep "Server Name"
-```
-
-- If it says **"PipeWire"** → follow PipeWire instructions below
-- If it says **"PulseAudio"** → follow PulseAudio instructions below
-
-**For PipeWire (Ubuntu 22.04+, Fedora 34+, most modern distros):**
-```bash
-mkdir -p ~/.config/pipewire/pipewire.conf.d
-nano ~/.config/pipewire/pipewire.conf.d/vail-zoomer.conf
-```
-
-Paste this block, then save (Ctrl+O, Enter, Ctrl+X):
-```
-context.modules = [
-  { name = libpipewire-module-loopback
-    args = {
-      node.description = "Vail Zoomer"
-      capture.props = {
-        node.name = "VailZoomer"
-        media.class = "Audio/Sink"
-        audio.position = [ FL FR ]
-      }
-      playback.props = {
-        node.name = "VailZoomerMic"
-        media.class = "Audio/Source"
-        audio.position = [ FL FR ]
-      }
-    }
-  }
-]
-```
-
-Restart PipeWire:
-```bash
-systemctl --user restart pipewire pipewire-pulse
-```
-
-**For PulseAudio (older systems):**
-```bash
-mkdir -p ~/.config/pulse
-echo 'load-module module-null-sink sink_name=VailZoomer sink_properties=device.description="Vail_Zoomer_Output"' >> ~/.config/pulse/default.pa
-echo 'load-module module-remap-source master=VailZoomer.monitor source_name=VailZoomerMic source_properties=device.description="Vail_Zoomer_Microphone"' >> ~/.config/pulse/default.pa
-pulseaudio -k && pulseaudio --start
-```
-
-**Verify Installation:**
-```bash
-pactl list sources short | grep -i vail
-```
-
-If you see "VailZoomerMic", you're all set!
-
-#### Troubleshooting Linux:
-- **Automatic setup fails**: Try the manual setup instructions above
-- **No virtual device after setup**: Log out and back in, or restart your computer
-- **AppImage won't run**: Make it executable first: `chmod +x vail-zoomer*.AppImage`
-- **MIDI not detected**: Install ALSA MIDI support — `sudo apt install libasound2-plugins` (Debian/Ubuntu), `sudo pacman -S alsa-plugins` (Arch/Manjaro), or `sudo dnf install alsa-plugins-pulseaudio` (Fedora)
-- **Zoom doesn't show the virtual microphone**: Edit `~/.config/zoomus.conf` and set `system.audio.type=default` (instead of `alsa`), then restart Zoom
+- **Setup fails with a missing-package error**: copy/paste the install command shown in the app, then click "Setup Virtual Audio" again
+- **No virtual device after setup**: log out and back in, or restart
+- **AppImage won't run**: `chmod +x vail-zoomer*.AppImage`
+- **MIDI device not found**: ensure the keyer is plugged in **before** launching the app; run `aconnect -l` to confirm Linux sees it
+- **Zoom doesn't show the virtual microphone**: edit `~/.config/zoomus.conf` and set `system.audio.type=default` (instead of `alsa`), then restart Zoom
 
 ---
 
@@ -404,7 +315,6 @@ chmod +x vail-zoomer*.AppImage
 1. Use wired headphones instead of Bluetooth
 2. Reduce system audio buffer sizes
 3. Close unnecessary applications
-4. On Linux, consider using JACK for lower latency
 
 ---
 
