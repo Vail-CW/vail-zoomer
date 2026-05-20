@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
 import { check, Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 
 import { Step1KeyerSetup } from "./components/steps/Step1KeyerSetup";
 import { Step2VirtualAudio } from "./components/steps/Step2VirtualAudio";
@@ -97,8 +96,6 @@ function App() {
 
   // Update state
   const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
-  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<string>("");
 
   // Test recording state
   type TestRecordingState = "idle" | "recording" | "playing";
@@ -612,36 +609,16 @@ function App() {
     setAppMode("main");
   };
 
-  // Update handlers
-  const handleInstallUpdate = async () => {
-    if (!updateAvailable || isInstallingUpdate) return;
-    setIsInstallingUpdate(true);
-    setUpdateStatus("Downloading...");
-    let downloadedBytes = 0;
-    let totalBytes = 0;
+  // In-app install is disabled while the updater pipeline is being fixed.
+  // Direct users to the GitHub releases page to download manually.
+  const RELEASES_URL = "https://github.com/Vail-CW/vail-zoomer/releases/latest";
+
+  const handleOpenReleases = async () => {
     try {
-      await updateAvailable.downloadAndInstall((event) => {
-        if (event.event === "Started" && event.data.contentLength) {
-          totalBytes = event.data.contentLength;
-          setUpdateStatus("Downloading... 0%");
-        } else if (event.event === "Progress" && totalBytes > 0) {
-          downloadedBytes += event.data.chunkLength;
-          const percent = Math.round((downloadedBytes / totalBytes) * 100);
-          setUpdateStatus(`Downloading... ${percent}%`);
-        } else if (event.event === "Finished") {
-          setUpdateStatus("Installing...");
-        }
-      });
-      setUpdateStatus("Restarting...");
-      await relaunch();
+      await invoke("plugin:shell|open", { path: RELEASES_URL });
     } catch (err) {
-      console.error("Failed to install update:", err);
-      setUpdateStatus(`Error: ${err}`);
-      // Reset after showing error briefly
-      setTimeout(() => {
-        setIsInstallingUpdate(false);
-        setUpdateStatus("");
-      }, 3000);
+      console.error("Failed to open releases page:", err);
+      window.open(RELEASES_URL, "_blank");
     }
   };
 
@@ -652,26 +629,21 @@ function App() {
       <div className="fixed top-0 left-0 right-0 p-3 bg-green-900/90 border-b border-green-700 z-50">
         <div className="flex items-center justify-center gap-4">
           <span className="text-green-300 text-lg">
-            {isInstallingUpdate && updateStatus
-              ? updateStatus
-              : `Update Available: v${updateAvailable.version}`}
+            Update Available: v{updateAvailable.version} — download from GitHub
           </span>
           <BigButton
             variant="success"
-            onClick={handleInstallUpdate}
-            disabled={isInstallingUpdate}
+            onClick={handleOpenReleases}
             className="!min-h-0 !py-2 !px-4 !text-base"
           >
-            {isInstallingUpdate ? (updateStatus || "Installing...") : "Install & Restart"}
+            Open Releases Page
           </BigButton>
-          {!isInstallingUpdate && (
-            <button
-              onClick={() => setUpdateAvailable(null)}
-              className="text-green-400 hover:text-white"
-            >
-              Later
-            </button>
-          )}
+          <button
+            onClick={() => setUpdateAvailable(null)}
+            className="text-green-400 hover:text-white"
+          >
+            Later
+          </button>
         </div>
       </div>
     );
