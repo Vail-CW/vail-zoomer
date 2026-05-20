@@ -60,14 +60,14 @@ export function InfoBox({
   const styles = variantStyles[variant];
 
   return (
-    <div className={`rounded-xl border-2 p-5 ${styles.container} ${className}`}>
+    <div className={`rounded-2xl border-2 p-5 ${styles.container} ${className}`}>
       <div className="flex gap-4">
         <div className={`flex-shrink-0 ${styles.icon}`}>{icons[variant]}</div>
         <div className="flex-1">
           {title && (
             <h4 className={`text-xl font-bold mb-2 ${styles.title}`}>{title}</h4>
           )}
-          <div className="text-lg text-gray-200 leading-relaxed">{children}</div>
+          <div className="text-base text-gray-100 leading-relaxed">{children}</div>
         </div>
       </div>
     </div>

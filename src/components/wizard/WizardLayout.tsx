@@ -1,5 +1,6 @@
 import { StepIndicator } from "./StepIndicator";
 import { BigButton } from "../shared/BigButton";
+import { AppIcon } from "../shared/AppIcon";
 
 interface WizardLayoutProps {
   currentStep: number;
@@ -23,18 +24,29 @@ export function WizardLayout({
   children,
   onBack,
   onNext,
-  nextLabel = "Next Step",
+  nextLabel = "Next",
   backLabel = "Back",
   nextDisabled = false,
   showBack = true,
 }: WizardLayoutProps) {
   return (
-    <div className="h-screen bg-gray-900 text-white p-4 flex flex-col">
-      {/* Header - stays fixed at top */}
-      <header className="text-center mb-3 flex-shrink-0">
+    <div className="h-screen text-white p-5 flex flex-col">
+      {/* Header */}
+      <header className="flex items-center justify-center gap-3 mb-2 flex-shrink-0">
+        <AppIcon size={36} />
         <h1 className="text-2xl font-bold text-amber-400">Vail Zoomer</h1>
-        <p className="text-gray-400 text-sm">Setup Guide</p>
       </header>
+
+      {/* Persistent headphones reminder — runs the length of the wizard so
+          new users see it before they ever press a key. */}
+      <div className="flex items-center gap-2 px-3 py-1.5 mb-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex-shrink-0">
+        <svg className="w-4 h-4 text-amber-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 3a9 9 0 00-9 9v7a2 2 0 002 2h3v-8H5v-1a7 7 0 0114 0v1h-3v8h3a2 2 0 002-2v-7a9 9 0 00-9-9z" />
+        </svg>
+        <span className="text-sm text-amber-100">
+          <strong>Wear headphones</strong> while setting up — stops your mic catching the tone and prevents feedback.
+        </span>
+      </div>
 
       {/* Scrollable area for all content including navigation */}
       <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
@@ -48,20 +60,20 @@ export function WizardLayout({
         </div>
 
         {/* Step title */}
-        <h2 className="text-xl font-bold text-white text-center mb-3 flex-shrink-0">{title}</h2>
+        <h2 className="text-2xl font-bold text-white text-center mb-4 flex-shrink-0">{title}</h2>
 
         {/* Content area */}
         <div className="flex-1">{children}</div>
 
-        {/* Navigation buttons - now inside scroll area */}
+        {/* Navigation buttons */}
         <div className="flex gap-3 justify-center py-4 flex-shrink-0">
           {showBack && currentStep > 1 && onBack && (
-            <BigButton variant="secondary" onClick={onBack} className="!min-h-[48px] !py-2 !text-base">
+            <BigButton variant="secondary" onClick={onBack} className="!min-h-[52px] !py-3 !text-lg">
               {backLabel}
             </BigButton>
           )}
           {onNext && (
-            <BigButton onClick={onNext} disabled={nextDisabled} className="!min-h-[48px] !py-2 !text-base">
+            <BigButton onClick={onNext} disabled={nextDisabled} className="!min-h-[52px] !py-3 !text-lg">
               {nextLabel} →
             </BigButton>
           )}

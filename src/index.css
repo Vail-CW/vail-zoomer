@@ -7,14 +7,15 @@
   line-height: 1.5;
   font-weight: 400;
   color: #f3f4f6;
-  background-color: #111827;
-  font-size: 12px;
+  background-color: #0f172a;
+  font-size: 17px;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background-color: #0f172a;
 }
 
 /* Improved focus states for keyboard navigation */
@@ -33,31 +34,31 @@ input[type="range"] {
 
 input[type="range"]::-webkit-slider-runnable-track {
   background: #374151;
-  height: 10px;
-  border-radius: 5px;
+  height: 14px;
+  border-radius: 7px;
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #f59e0b;
-  margin-top: -6px;
+  margin-top: -7px;
   border: 2px solid #1f2937;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 input[type="range"]::-moz-range-track {
   background: #374151;
-  height: 10px;
-  border-radius: 5px;
+  height: 14px;
+  border-radius: 7px;
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: #f59e0b;
   border: 2px solid #1f2937;
