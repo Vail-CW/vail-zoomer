@@ -2,6 +2,7 @@ import { WizardLayout } from "../wizard/WizardLayout";
 import { BigSelect } from "../shared/BigSelect";
 import { InfoBox } from "../shared/InfoBox";
 import { CollapsibleSection } from "../shared/CollapsibleSection";
+import { KeyIndicator } from "../shared/KeyIndicator";
 
 const KEYER_TYPES = [
   { value: "Straight", label: "Straight Key", description: "One paddle, you control all timing" },
@@ -69,16 +70,17 @@ export function Step1KeyerSetup({
     <WizardLayout
       currentStep={1}
       totalSteps={4}
-      stepLabels={["Vail Adapter", "Virtual Audio", "Audio", "Video App"]}
-      title="Connect Your Vail Adapter"
+      stepLabels={["Keyer", "Virtual audio", "Audio", "Video app"]}
+      title="Connect your Vail Adapter"
       onNext={onNext}
       nextDisabled={!midiConnected}
       showBack={false}
     >
       <div className="max-w-xl mx-auto space-y-4">
         {/* Instructions */}
-        <p className="text-base text-gray-300 text-center">
+        <p className="text-base text-gray-200 text-center">
           Plug your <strong className="text-amber-400">Vail Adapter</strong> into a USB port.
+          The app will find it automatically.
         </p>
 
         {/* Device selection */}
@@ -89,25 +91,25 @@ export function Step1KeyerSetup({
               <button
                 key={device}
                 onClick={() => onSelectMidiDevice(device)}
-                className={`w-full p-3 text-left rounded-lg border-2 transition-colors ${
+                className={`w-full p-4 text-left rounded-xl border-2 transition-colors min-h-[56px] ${
                   selectedMidiDevice === device
-                    ? "bg-amber-500/20 border-amber-500 text-white"
-                    : "bg-gray-800 border-gray-600 text-gray-300 hover:border-gray-500"
+                    ? "bg-amber-500/15 border-amber-400 text-white"
+                    : "bg-gray-800 border-gray-600 text-gray-200 hover:border-gray-500"
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                       selectedMidiDevice === device
-                        ? "border-amber-500 bg-amber-500"
+                        ? "border-amber-400 bg-amber-500"
                         : "border-gray-500"
                     }`}
                   >
                     {selectedMidiDevice === device && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-gray-900" />
+                      <div className="w-2 h-2 rounded-full bg-gray-900" />
                     )}
                   </div>
-                  <span>{device}</span>
+                  <span className="text-base">{device}</span>
                 </div>
               </button>
             ))}
@@ -115,31 +117,31 @@ export function Step1KeyerSetup({
             {otherDevices.length > 0 && (
               <>
                 {vailDevices.length > 0 && (
-                  <p className="text-xs text-gray-500 pt-2">Other MIDI devices:</p>
+                  <p className="text-sm text-gray-400 pt-2">Other MIDI devices</p>
                 )}
                 {otherDevices.map((device) => (
                   <button
                     key={device}
                     onClick={() => onSelectMidiDevice(device)}
-                    className={`w-full p-3 text-left rounded-lg border-2 transition-colors ${
+                    className={`w-full p-4 text-left rounded-xl border-2 transition-colors min-h-[56px] ${
                       selectedMidiDevice === device
-                        ? "bg-amber-500/20 border-amber-500 text-white"
-                        : "bg-gray-800 border-gray-600 text-gray-300 hover:border-gray-500"
+                        ? "bg-amber-500/15 border-amber-400 text-white"
+                        : "bg-gray-800 border-gray-600 text-gray-200 hover:border-gray-500"
                     }`}
                   >
                     <div className="flex items-center gap-3">
                       <div
-                        className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                           selectedMidiDevice === device
-                            ? "border-amber-500 bg-amber-500"
+                            ? "border-amber-400 bg-amber-500"
                             : "border-gray-500"
                         }`}
                       >
                         {selectedMidiDevice === device && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-gray-900" />
+                          <div className="w-2 h-2 rounded-full bg-gray-900" />
                         )}
                       </div>
-                      <span>{device}</span>
+                      <span className="text-base">{device}</span>
                     </div>
                   </button>
                 ))}
@@ -147,83 +149,76 @@ export function Step1KeyerSetup({
             )}
           </div>
         ) : (
-          <InfoBox variant="warning" title="No MIDI devices found">
-            <p className="text-sm">
-              Please plug in your Vail Adapter. If you just plugged it in, wait a moment.
+          <InfoBox variant="warning" title="Looking for your Vail Adapter…">
+            <p className="text-base">
+              Plug it in over USB if you haven't yet — it'll show up here as soon as the
+              operating system sees it.
             </p>
           </InfoBox>
         )}
 
         {/* Connection status */}
         {midiConnected && (
-          <InfoBox variant="success" title="Connected!">
-            <p className="text-sm">Your Vail Adapter is ready. Try pressing your key!</p>
+          <InfoBox variant="success" title="Connected">
+            <p className="text-base">Your Vail Adapter is ready. Try pressing your key.</p>
           </InfoBox>
         )}
 
         {/* Keying indicator */}
         {midiConnected && (
-          <div className="flex flex-col items-center gap-2 py-3">
-            <div
-              className={`w-16 h-16 rounded-full border-4 transition-all duration-75 flex items-center justify-center ${
-                isKeyDown
-                  ? "bg-amber-500 border-amber-400 shadow-lg shadow-amber-500/50"
-                  : "bg-gray-700 border-gray-600"
-              }`}
-            >
-              <span className={`text-2xl font-bold ${isKeyDown ? "text-gray-900" : "text-gray-500"}`}>
-                {isKeyDown ? "●" : "○"}
-              </span>
-            </div>
-            <p className={`text-sm font-medium ${isKeyDown ? "text-amber-400" : "text-gray-400"}`}>
-              {isKeyDown ? "Key pressed!" : "Press your key to test"}
-            </p>
-          </div>
+          <KeyIndicator
+            isKeyDown={isKeyDown}
+            label={isKeyDown ? "Key pressed!" : "Press your key to test"}
+          />
         )}
 
         {/* Keyer type selection */}
         <div className="space-y-2">
-          <label className="block text-base text-gray-200 font-medium">Key type:</label>
+          <label className="block text-lg text-gray-200 font-medium">Key type</label>
           <BigSelect
             value={keyerType}
             onChange={onKeyerTypeChange}
             options={KEYER_TYPES}
-            placeholder="Select your key type..."
+            placeholder="Select your key type…"
           />
         </div>
 
-        {/* Speed and tone settings */}
-        <CollapsibleSection title="Adjust speed and tone" defaultOpen={false}>
-          <div className="space-y-4 pt-2">
-            {keyerType !== "Straight" && (
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">
-                  Speed: <span className="text-amber-400 font-bold">{wpm} WPM</span>
-                </label>
-                <input
-                  type="range"
-                  min="5"
-                  max="50"
-                  value={wpm}
-                  onChange={(e) => onWpmChange(parseInt(e.target.value))}
-                  className="w-full"
-                />
-              </div>
-            )}
-            <div>
-              <label className="block text-sm text-gray-300 mb-1">
-                Tone pitch: <span className="text-amber-400 font-bold">{sidetoneFrequency} Hz</span>
-              </label>
-              <input
-                type="range"
-                min="400"
-                max="1000"
-                step="10"
-                value={sidetoneFrequency}
-                onChange={(e) => onSidetoneFrequencyChange(parseInt(e.target.value))}
-                className="w-full"
-              />
-            </div>
+        {/* Speed slider — visible by default for non-straight keyers */}
+        {keyerType !== "Straight" && (
+          <div className="space-y-1">
+            <label className="flex justify-between items-center text-lg text-gray-200 font-medium">
+              <span>Speed</span>
+              <span className="text-amber-400 font-bold">{wpm} WPM</span>
+            </label>
+            <input
+              type="range"
+              min="5"
+              max="50"
+              value={wpm}
+              onChange={(e) => onWpmChange(parseInt(e.target.value))}
+              className="w-full"
+              aria-label="Words per minute"
+            />
+          </div>
+        )}
+
+        {/* Tone pitch is rarely changed — stays tucked away */}
+        <CollapsibleSection title="Adjust tone pitch (optional)" defaultOpen={false}>
+          <div className="space-y-1 pt-2">
+            <label className="flex justify-between items-center text-base text-gray-200">
+              <span>Tone pitch</span>
+              <span className="text-amber-400 font-bold">{sidetoneFrequency} Hz</span>
+            </label>
+            <input
+              type="range"
+              min="400"
+              max="1000"
+              step="10"
+              value={sidetoneFrequency}
+              onChange={(e) => onSidetoneFrequencyChange(parseInt(e.target.value))}
+              className="w-full"
+              aria-label="Tone pitch"
+            />
           </div>
         </CollapsibleSection>
       </div>

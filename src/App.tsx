@@ -9,6 +9,7 @@ import { Step2VirtualAudio } from "./components/steps/Step2VirtualAudio";
 import { Step3AudioSetup } from "./components/steps/Step3AudioSetup";
 import { Step4VideoAppTips } from "./components/steps/Step4VideoAppTips";
 import { OperationalView } from "./components/main/OperationalView";
+import { SettingsSheet } from "./components/main/SettingsSheet";
 import { InfoBox } from "./components/shared/InfoBox";
 import { BigButton } from "./components/shared/BigButton";
 
@@ -75,6 +76,7 @@ function App() {
   const [selectedMidiDevice, setSelectedMidiDevice] = useState<string | null>(null);
   const [audioStarted, setAudioStarted] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [currentOS, setCurrentOS] = useState<OSType>("windows");
 
   // Audio device state
@@ -242,6 +244,25 @@ function App() {
           savedSettings.output_device = blackHoleDevice.internal_name;
           setSelectedOutputDevice(blackHoleDevice.internal_name);
           updateSettings({ output_device: blackHoleDevice.internal_name });
+        }
+      }
+
+      // On Windows, auto-detect VB-Audio Cable. Without this, a fresh install
+      // has no UI path to select it during the wizard and the user ends up
+      // routing morse to their speakers instead of to Zoom.
+      if (detectedOS === "windows") {
+        const cableDevice = outputDeviceList.find(d => {
+          const i = d.internal_name.toLowerCase();
+          const n = d.display_name.toLowerCase();
+          return i.includes("cable input") || n.includes("cable input")
+            || (i.includes("cable") && i.includes("vb-audio"))
+            || (n.includes("cable") && n.includes("vb-audio"));
+        });
+        if (cableDevice && savedSettings.output_device !== cableDevice.internal_name) {
+          console.log("[audio] Auto-selecting VB-Cable as output device:", cableDevice.display_name);
+          savedSettings.output_device = cableDevice.internal_name;
+          setSelectedOutputDevice(cableDevice.internal_name);
+          updateSettings({ output_device: cableDevice.internal_name });
         }
       }
 
@@ -862,6 +883,7 @@ function App() {
         {wizardStep === 2 && (
           <Step2VirtualAudio
             currentOS={currentOS}
+            outputDevices={outputDevices}
             onBack={() => setWizardStep(1)}
             onNext={() => setWizardStep(3)}
             onSetupLinuxAudio={currentOS === "linux" ? setupLinuxAudio : undefined}
@@ -955,6 +977,14 @@ function App() {
     );
   }
 
+  // Re-run the first-time wizard from the Settings sheet's "Re-run setup" link.
+  const rerunWizard = () => {
+    localStorage.removeItem(WIZARD_COMPLETE_KEY);
+    setShowSettings(false);
+    setWizardStep(1);
+    setAppMode("wizard");
+  };
+
   // Main operational view
   return (
     <>
@@ -964,28 +994,15 @@ function App() {
         audioStarted={audioStarted}
         isKeyDown={isKeyDown}
         estimatedWpm={estimatedWpm}
+        selectedMidiDevice={selectedMidiDevice}
+        selectedInputDevice={selectedInputDevice}
+        inputDevices={inputDevices}
         cwText={cwText}
         onClearCwText={clearText}
-        keyerType={settings.keyer_type}
-        wpm={settings.wpm}
-        sidetoneFrequency={settings.sidetone_frequency}
-        sidetoneVolume={settings.sidetone_volume}
-        micVolume={settings.mic_volume}
-        micDucking={settings.mic_ducking}
+        micLevel={micLevel}
         outputLevel={outputLevel}
-        onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
-        onWpmChange={(wpm) => updateSettings({ wpm })}
-        onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}
-        onSidetoneVolumeChange={(vol) => updateSettings({ sidetone_volume: vol })}
-        onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
-        onMicDuckingChange={(enabled) => updateSettings({ mic_ducking: enabled })}
         onOpenVideoTips={() => setAppMode("video-tips")}
-        onOpenSettings={() => {
-          // Reset wizard completion to re-run setup
-          localStorage.removeItem(WIZARD_COMPLETE_KEY);
-          setWizardStep(1);
-          setAppMode("wizard");
-        }}
+        onOpenSettings={() => setShowSettings(true)}
         onOpenHelp={() => setShowHelp(true)}
         testRecordingState={testRecordingState}
         testRecordingCountdown={testRecordingCountdown}
@@ -995,41 +1012,103 @@ function App() {
         onStopTestPlayback={stopTestPlayback}
       />
 
-      {/* Help Modal - reuse existing help content or create new */}
+      {showSettings && (
+        <SettingsSheet
+          midiDevices={midiDevices}
+          selectedMidiDevice={selectedMidiDevice}
+          midiConnected={midiConnected}
+          inputDevices={inputDevices}
+          outputDevices={outputDevices}
+          selectedInputDevice={selectedInputDevice}
+          selectedOutputDevice={selectedOutputDevice}
+          selectedLocalDevice={selectedLocalDevice}
+          micLevel={micLevel}
+          currentOS={currentOS}
+          keyerType={settings.keyer_type}
+          wpm={settings.wpm}
+          sidetoneFrequency={settings.sidetone_frequency}
+          sidetoneVolume={settings.sidetone_volume}
+          micVolume={settings.mic_volume}
+          micDucking={settings.mic_ducking}
+          sidetoneRoute={settings.sidetone_route}
+          onSelectMidiDevice={connectMidi}
+          onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
+          onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}
+          onLocalDeviceChange={(device) => {
+            setSelectedLocalDevice(device);
+            updateSettings({ local_output_device: device });
+            restartAudio(selectedOutputDevice, selectedInputDevice, device);
+          }}
+          onSidetoneRouteChange={async (route) => {
+            await updateSettings({ sidetone_route: route });
+            let localDev = selectedLocalDevice;
+            if (route === "Both" && !selectedLocalDevice) {
+              const firstLocalDevice = outputDevices.find(d =>
+                !d.internal_name.toLowerCase().includes("vailzoomer") &&
+                !d.display_name.toLowerCase().includes("vail zoomer") &&
+                !d.internal_name.toLowerCase().includes("blackhole") &&
+                !d.display_name.toLowerCase().includes("blackhole") &&
+                !d.internal_name.toLowerCase().includes("cable") &&
+                !d.display_name.toLowerCase().includes("cable")
+              );
+              if (firstLocalDevice) {
+                localDev = firstLocalDevice.internal_name;
+                setSelectedLocalDevice(localDev);
+                await updateSettings({ local_output_device: localDev });
+              }
+            }
+            await restartAudio(selectedOutputDevice, selectedInputDevice, localDev);
+          }}
+          onKeyerTypeChange={(type) => updateSettings({ keyer_type: type })}
+          onWpmChange={(wpm) => updateSettings({ wpm })}
+          onSidetoneFrequencyChange={(freq) => updateSettings({ sidetone_frequency: freq })}
+          onSidetoneVolumeChange={(vol) => updateSettings({ sidetone_volume: vol })}
+          onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
+          onMicDuckingChange={(enabled) => updateSettings({ mic_ducking: enabled })}
+          onRefreshDevices={refreshDeviceLists}
+          onRerunSetup={rerunWizard}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* Help Modal */}
       {showHelp && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-xl max-w-lg w-full p-6 shadow-xl">
+          <div className="bg-gray-800 rounded-2xl max-w-lg w-full p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold text-amber-400">Help</h2>
               <button
                 onClick={() => setShowHelp(false)}
-                className="text-gray-400 hover:text-white text-3xl leading-none"
+                className="min-h-[44px] min-w-[44px] text-gray-300 hover:text-white text-3xl leading-none"
+                aria-label="Close help"
               >
                 &times;
               </button>
             </div>
-            <div className="space-y-4 text-lg text-gray-300">
+            <div className="space-y-4 text-base text-gray-200">
               <p>
-                <strong className="text-white">Vail Zoomer</strong> lets you send Morse code
-                during video calls by mixing your microphone with computer-generated sidetone.
+                <strong className="text-white">Vail Zoomer</strong> mixes your microphone with
+                morse-code sidetone and sends both to Zoom, Teams, Discord, or Meet — so the
+                other side hears your voice <em>and</em> your CW.
               </p>
               <div className="space-y-2">
-                <p className="font-medium text-white">Quick Tips:</p>
+                <p className="font-medium text-white">Quick tips:</p>
                 <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>Use <strong>Test Dit/Dah</strong> to verify audio is working</li>
-                  <li>Adjust <strong>Speed</strong> and <strong>Tone</strong> to your preference</li>
-                  <li>Click <strong>Video App Tips</strong> for Zoom/Teams setup help</li>
+                  <li>Press your Vail Adapter key — the circle on the main screen lights up.</li>
+                  <li>Use <strong>Start test recording</strong> to hear exactly what Zoom will hear.</li>
+                  <li>Tap the <strong>gear icon</strong> to pick devices, change speed, or change the tone.</li>
+                  <li>Tap <strong>Set up Zoom / Teams / Discord / Meet</strong> for the per-app settings.</li>
                 </ul>
               </div>
               <InfoBox variant="info">
                 <p>
-                  Click the <strong>Settings</strong> button (gear icon) to run the setup wizard again.
+                  If a status chip turns red, tap it to jump straight to Settings and fix it.
                 </p>
               </InfoBox>
             </div>
             <div className="mt-6 flex justify-end">
-              <BigButton onClick={() => setShowHelp(false)} className="!min-h-0 !py-3">
-                Got it!
+              <BigButton onClick={() => setShowHelp(false)} className="!min-h-[52px] !py-3">
+                Got it
               </BigButton>
             </div>
           </div>
