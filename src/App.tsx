@@ -1073,10 +1073,19 @@ function App() {
 
       {/* Help Modal */}
       {showHelp && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-2xl max-w-lg w-full p-6 shadow-xl">
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="help-modal-title"
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            className="bg-gray-800 rounded-2xl max-w-lg w-full p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-bold text-amber-400">Help</h2>
+              <h2 id="help-modal-title" className="text-2xl font-bold text-amber-400">Help</h2>
               <button
                 onClick={() => setShowHelp(false)}
                 className="min-h-[44px] min-w-[44px] text-gray-300 hover:text-white text-3xl leading-none"

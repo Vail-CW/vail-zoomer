@@ -165,11 +165,20 @@ export function SettingsSheet({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-stretch justify-center z-50">
-      <div className="bg-gray-900 w-full max-w-2xl h-full overflow-y-auto shadow-2xl">
+    <div
+      className="fixed inset-0 bg-black/70 flex items-stretch justify-center z-50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-sheet-title"
+      onClick={onClose}
+    >
+      <div
+        className="bg-gray-900 w-full max-w-2xl h-full overflow-y-auto shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Sticky header */}
         <div className="sticky top-0 bg-gray-900 border-b border-gray-700 px-5 py-4 flex items-center justify-between z-10">
-          <h2 className="text-2xl font-bold text-amber-400">Settings</h2>
+          <h2 id="settings-sheet-title" className="text-2xl font-bold text-amber-400">Settings</h2>
           <button
             onClick={onClose}
             className="min-w-[48px] min-h-[48px] px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-lg font-medium"

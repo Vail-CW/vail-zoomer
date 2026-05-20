@@ -321,11 +321,20 @@ export function Step3AudioSetup({
           (sources, sinks, BT profiles, ALSA, packages) for the user to
           share with the developer. */}
       {diagOpen && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl">
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="audio-diag-title"
+          onClick={() => setDiagOpen(false)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-4 border-b border-gray-700 flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-amber-400">Audio diagnostics</h2>
+                <h2 id="audio-diag-title" className="text-xl font-semibold text-amber-400">Audio diagnostics</h2>
                 <p className="text-base text-gray-200 mt-0.5">
                   Snapshot of every audio device on this system — including ones Vail Zoomer
                   hides. If your mic is missing here, copy this and share with the developers.
