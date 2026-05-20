@@ -94,6 +94,9 @@ fn update_settings(state: tauri::State<AppState>, settings: Settings) -> Result<
 
         // Send WPM
         let _ = handler.send_wpm(settings.wpm as u8);
+
+        // Send sidetone frequency (Hz -> nearest MIDI note, CC2)
+        let _ = handler.send_sidetone_frequency_hz(settings.sidetone_frequency);
     }
 
     // Save settings to disk and return any errors to the frontend
