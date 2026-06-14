@@ -41,7 +41,12 @@ export const isVirtualOutput = (d: DeviceInfo): boolean => {
   );
 };
 
-/** Inputs that came from a virtual driver — same idea, narrower set. */
+/**
+ * Inputs that came from a virtual driver. These should never be offered as a
+ * microphone — they're routing endpoints, not capture devices. VB-Cable's
+ * "CABLE Output" shows up as a recordable input on Windows, so it's included
+ * here to keep it out of the mic picker.
+ */
 export const isVirtualInput = (d: DeviceInfo): boolean => {
   const i = d.internal_name.toLowerCase();
   const n = d.display_name.toLowerCase();
@@ -49,7 +54,11 @@ export const isVirtualInput = (d: DeviceInfo): boolean => {
     i.includes("vailzoomer") ||
     n.includes("vail zoomer") ||
     i.includes("blackhole") ||
-    n.includes("blackhole")
+    n.includes("blackhole") ||
+    i.includes("cable") ||
+    n.includes("cable") ||
+    i.includes("vb-audio") ||
+    n.includes("vb-audio")
   );
 };
 

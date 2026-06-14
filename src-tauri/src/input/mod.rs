@@ -43,9 +43,12 @@ pub struct MidiHandler {
     output_connection: Option<MidiOutputConnection>,
     event_rx: Receiver<MidiEvent>,
     event_tx: Sender<MidiEvent>,
-    /// Persistent MidiInput client used only for listing available devices.
-    /// Keeping this alive avoids creating/disposing CoreMIDI clients on every
+    /// Persistent MidiInput client used only for listing devices on macOS.
+    /// Keeping it alive avoids creating/disposing CoreMIDI clients on every
     /// poll cycle, which can cause macOS to stop reporting hot-plugged devices.
+    /// Other platforms list with a fresh client each call (see `list_devices`),
+    /// so this stays `None` there.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     listing_client: Option<MidiInput>,
 }
 
@@ -53,10 +56,13 @@ impl MidiHandler {
     pub fn new() -> Result<Self, String> {
         let (event_tx, event_rx) = mpsc::channel();
 
-        // Create a persistent MidiInput for listing devices.
-        // On macOS this avoids repeatedly creating/disposing CoreMIDI clients
-        // which can break hot-plug detection.
+        // macOS keeps a persistent listing client (see `list_devices`) to keep
+        // CoreMIDI hot-plug detection working. Windows/Linux re-enumerate with a
+        // fresh client each call instead, so we don't hold one here.
+        #[cfg(target_os = "macos")]
         let listing_client = MidiInput::new("Vail Zoomer List").ok();
+        #[cfg(not(target_os = "macos"))]
+        let listing_client: Option<MidiInput> = None;
 
         Ok(Self {
             input_connection: None,
@@ -67,28 +73,31 @@ impl MidiHandler {
         })
     }
 
-    /// List available MIDI input devices
+    /// List available MIDI input devices.
     pub fn list_devices(&self) -> Vec<String> {
-        // Use the persistent listing client to avoid creating/disposing
-        // CoreMIDI clients on every call (fixes macOS hot-plug detection)
+        // macOS (CoreMIDI): reuse the persistent client. Creating/disposing a
+        // CoreMIDI client on every poll can make it stop reporting hot-plugged
+        // devices, so we query the long-lived one.
+        #[cfg(target_os = "macos")]
         if let Some(ref midi_in) = self.listing_client {
-            midi_in
+            return midi_in
                 .ports()
                 .iter()
                 .filter_map(|p| midi_in.port_name(p).ok())
-                .collect()
-        } else {
-            // Fallback: create a temporary client if persistent one failed
-            match MidiInput::new("Vail Zoomer List") {
-                Ok(midi_in) => {
-                    midi_in
-                        .ports()
-                        .iter()
-                        .filter_map(|p| midi_in.port_name(p).ok())
-                        .collect()
-                }
-                Err(_) => vec![],
-            }
+                .collect();
+        }
+
+        // Windows (WinMM) / Linux (ALSA): a long-lived MidiInput will not
+        // surface a device that was plugged in after it was created, which is
+        // why a hot-plugged adapter never appeared until the app was restarted.
+        // A throwaway client re-enumerates the ports every time.
+        match MidiInput::new("Vail Zoomer List") {
+            Ok(midi_in) => midi_in
+                .ports()
+                .iter()
+                .filter_map(|p| midi_in.port_name(p).ok())
+                .collect(),
+            Err(_) => Vec::new(),
         }
     }
 

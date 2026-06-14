@@ -398,6 +398,72 @@ fn is_linux_audio_setup_completed(state: tauri::State<AppState>) -> bool {
     state.settings.lock().linux_audio_setup_completed
 }
 
+// Windows VB-Cable Install Command
+
+/// Launch the bundled VB-Cable installer, elevated, on explicit user request.
+///
+/// The app setup never touches the audio driver (that behavior gets installers
+/// flagged by antivirus/HIPS). This command is only ever called from a button
+/// the user clicks inside the app. On Windows it runs the bundled
+/// `VBCABLE_Setup_x64.exe` via a normal UAC elevation prompt; on other
+/// platforms it's a no-op error (VB-Cable is Windows-only).
+#[tauri::command]
+fn install_vbcable(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Don't flash a console window when we shell out to PowerShell.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .map_err(|e| format!("Could not locate app resources: {e}"))?;
+
+        // Prefer the 64-bit installer; fall back to the 32-bit one.
+        let x64 = resource_dir.join("resources/VBCABLE/VBCABLE_Setup_x64.exe");
+        let x86 = resource_dir.join("resources/VBCABLE/VBCABLE_Setup.exe");
+        let installer = if x64.exists() { x64 } else { x86 };
+
+        if !installer.exists() {
+            return Err(format!(
+                "VB-Cable installer not found at {}",
+                installer.display()
+            ));
+        }
+
+        // Single-quote the path for PowerShell and escape any embedded quotes.
+        let path_str = installer.to_string_lossy().replace('\'', "''");
+
+        // `Start-Process -Verb RunAs` raises the UAC prompt and runs the
+        // installer elevated. If the user cancels UAC, Start-Process throws and
+        // PowerShell exits non-zero, which we surface as a friendly message.
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &format!("Start-Process -FilePath '{path_str}' -Verb RunAs"),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map_err(|e| format!("Failed to launch installer: {e}"))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err("VB-Cable installer was not started — you may have declined the administrator prompt.".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err("VB-Cable is only used on Windows.".to_string())
+    }
+}
+
 // Test Recording Commands
 
 /// State returned for test recording progress
@@ -538,6 +604,7 @@ fn main() {
             dump_linux_audio_diagnostics,
             mark_linux_audio_setup_complete,
             is_linux_audio_setup_completed,
+            install_vbcable,
             start_test_recording,
             stop_test_recording,
             play_test_recording,
