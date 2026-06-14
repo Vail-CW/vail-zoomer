@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WizardLayout } from "../wizard/WizardLayout";
 import { InfoBox } from "../shared/InfoBox";
@@ -87,21 +87,18 @@ export function Step3AudioSetup({
   );
   const needsSetup = currentOS === "linux" && !vailZoomerExists;
 
-  // The user must pick a real mic — never "system default". If nothing is
-  // selected yet (first run, or the previously-chosen device disappeared),
-  // auto-pick the first non-virtual input so they have a valid choice
-  // immediately. They can change it via the dropdown, but they can never
-  // pick a meaningless "default" option.
-  const realInputs = inputDevices.filter((d) => !isVirtualInput(d));
-  useEffect(() => {
-    if (realInputs.length === 0) return;
-    const isStillValid = selectedInputDevice
-      && realInputs.some((d) => d.internal_name === selectedInputDevice);
-    if (!isStillValid) {
-      onInputDeviceChange(realInputs[0].internal_name);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputDevices, selectedInputDevice]);
+  // We intentionally do NOT auto-select a microphone. The user picks their mic
+  // explicitly — the picker (which hides virtual devices like VB-Cable) shows
+  // "Choose a microphone…" until they do.
+  //
+  // Gate the "Next" button until a real mic is chosen, so users can't sail past
+  // this step with no microphone selected. If the machine genuinely has no mic
+  // to pick, we don't trap them here.
+  const hasRealMic = inputDevices.some((d) => !isVirtualInput(d));
+  const micChosen =
+    !!selectedInputDevice &&
+    inputDevices.some((d) => d.internal_name === selectedInputDevice && !isVirtualInput(d));
+  const needsMicChoice = hasRealMic && !micChosen;
 
   const virtualOutputStatus = getVirtualOutputStatus(outputDevices, selectedOutputDevice, currentOS);
 
@@ -113,6 +110,7 @@ export function Step3AudioSetup({
       title="Pick your audio devices"
       onBack={onBack}
       onNext={onNext}
+      nextDisabled={needsMicChoice}
     >
       <div className="max-w-xl mx-auto space-y-4">
         {/* Warning if VailZoomer not set up yet */}
@@ -136,6 +134,15 @@ export function Step3AudioSetup({
           onRefreshDevices={onRefreshDevices}
           onOpenDiagnostics={openDiagnostics}
         />
+
+        {needsMicChoice && (
+          <InfoBox variant="warning">
+            <p className="text-base">
+              <strong>Choose your microphone above</strong> to continue. The “Next” button
+              turns on once a microphone is selected.
+            </p>
+          </InfoBox>
+        )}
 
         <VirtualOutputStatusLine status={virtualOutputStatus} />
 

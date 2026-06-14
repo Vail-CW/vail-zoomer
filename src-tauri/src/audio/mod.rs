@@ -20,11 +20,17 @@ use std::process::Command;
 ///
 /// Env vars are process-global, but cpal stream construction is serialized
 /// on the audio thread, so set→build→clear is safe within that thread.
+///
+/// Each guard only restores the env vars it actually modified — `for_sink`
+/// leaves `PULSE_SOURCE` alone (and vice versa) so a sink guard never wipes
+/// a caller's pre-existing source routing.
 #[cfg(target_os = "linux")]
 struct PulseRouteGuard {
-    prev_sink: Option<String>,
-    prev_source: Option<String>,
-    prev_pipewire_node: Option<String>,
+    // `Some(prev)` = guard touched this var, restore `prev` (which may itself
+    // be `None`, meaning the var was unset before). `None` = don't touch.
+    restore_sink: Option<Option<String>>,
+    restore_source: Option<Option<String>>,
+    restore_pipewire_node: Option<Option<String>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -40,9 +46,9 @@ impl PulseRouteGuard {
             std::env::remove_var("PIPEWIRE_NODE");
         }
         Self {
-            prev_sink,
-            prev_source: None,
-            prev_pipewire_node,
+            restore_sink: Some(prev_sink),
+            restore_source: None,
+            restore_pipewire_node: Some(prev_pipewire_node),
         }
     }
 
@@ -57,9 +63,9 @@ impl PulseRouteGuard {
             std::env::remove_var("PIPEWIRE_NODE");
         }
         Self {
-            prev_sink: None,
-            prev_source,
-            prev_pipewire_node,
+            restore_sink: None,
+            restore_source: Some(prev_source),
+            restore_pipewire_node: Some(prev_pipewire_node),
         }
     }
 }
@@ -110,17 +116,23 @@ fn resolve_local_sink(explicit: Option<&str>) -> Option<String> {
 #[cfg(target_os = "linux")]
 impl Drop for PulseRouteGuard {
     fn drop(&mut self) {
-        match self.prev_sink.take() {
-            Some(v) => std::env::set_var("PULSE_SINK", v),
-            None => std::env::remove_var("PULSE_SINK"),
+        if let Some(prev) = self.restore_sink.take() {
+            match prev {
+                Some(v) => std::env::set_var("PULSE_SINK", v),
+                None => std::env::remove_var("PULSE_SINK"),
+            }
         }
-        match self.prev_source.take() {
-            Some(v) => std::env::set_var("PULSE_SOURCE", v),
-            None => std::env::remove_var("PULSE_SOURCE"),
+        if let Some(prev) = self.restore_source.take() {
+            match prev {
+                Some(v) => std::env::set_var("PULSE_SOURCE", v),
+                None => std::env::remove_var("PULSE_SOURCE"),
+            }
         }
-        match self.prev_pipewire_node.take() {
-            Some(v) => std::env::set_var("PIPEWIRE_NODE", v),
-            None => std::env::remove_var("PIPEWIRE_NODE"),
+        if let Some(prev) = self.restore_pipewire_node.take() {
+            match prev {
+                Some(v) => std::env::set_var("PIPEWIRE_NODE", v),
+                None => std::env::remove_var("PIPEWIRE_NODE"),
+            }
         }
     }
 }

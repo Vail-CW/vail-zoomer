@@ -37,7 +37,7 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
               ~2 seconds.
             </li>
             <li>
-              In Settings, set <strong>Where do you want to hear the morse tones?</strong>{" "}
+              In Settings, set <strong>Where do you want to hear your sidetone?</strong>{" "}
               to <em>Adapter only</em> so your laptop speakers don't play the tone too.
             </li>
             <li>

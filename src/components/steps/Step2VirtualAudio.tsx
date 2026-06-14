@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { WizardLayout } from "../wizard/WizardLayout";
 import { InfoBox } from "../shared/InfoBox";
 import { BigButton } from "../shared/BigButton";
@@ -77,6 +78,32 @@ export function Step2VirtualAudio({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [copiedKind, setCopiedKind] = useState<null | "log" | "error">(null);
   const [forceShowInstall, setForceShowInstall] = useState(false);
+  const [vbcableLaunching, setVbcableLaunching] = useState(false);
+  const [vbcableError, setVbcableError] = useState<string | null>(null);
+  const [showManualVbcable, setShowManualVbcable] = useState(false);
+
+  // Launch the bundled VB-Cable installer (Windows only). This is the one place
+  // the driver install happens. Setup never touches it, so security software
+  // sees a deliberate, user-initiated action with a normal UAC prompt.
+  const handleInstallVbcable = async () => {
+    setVbcableError(null);
+    setVbcableLaunching(true);
+    try {
+      await invoke("install_vbcable");
+    } catch (e) {
+      // The backend returns short, friendly strings. Show those as-is, but fall
+      // back to a plain message for anything unexpected, and keep the raw error
+      // in the console for debugging.
+      console.error("VB-Cable install failed:", e);
+      const msg =
+        typeof e === "string" && e.trim().length > 0
+          ? e
+          : "Could not start the VB-Cable installer. Please try the manual download below.";
+      setVbcableError(msg);
+    } finally {
+      setVbcableLaunching(false);
+    }
+  };
 
   const copyToClipboard = (text: string, kind: "log" | "error") => {
     navigator.clipboard.writeText(text);
@@ -152,23 +179,56 @@ export function Step2VirtualAudio({
           <div className="space-y-3">
             <div className="bg-gray-800 rounded-2xl p-5 space-y-3">
               <h3 className="text-xl font-semibold text-amber-400">Install VB-Cable (free)</h3>
-              <ol className="list-decimal list-inside space-y-2 text-base text-gray-200">
-                <li>
-                  Download from{" "}
-                  <a
-                    href="https://vb-audio.com/Cable/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-amber-400 underline"
-                  >
-                    vb-audio.com/Cable
-                  </a>
-                </li>
-                <li>Extract the zip file</li>
-                <li>Right-click <code className="bg-gray-700 px-1 rounded">VBCABLE_Setup_x64.exe</code> → Run as administrator</li>
-                <li>Click "Install Driver" and follow the prompts</li>
-                <li><strong>Restart your computer</strong> after installation</li>
-              </ol>
+              <p className="text-base text-gray-200">
+                VB-Cable is a free virtual audio driver from VB-Audio. Click below to run the
+                installer — Windows will ask for administrator permission.
+              </p>
+
+              <BigButton
+                onClick={handleInstallVbcable}
+                disabled={vbcableLaunching}
+                className="!min-h-[48px] !py-2"
+              >
+                {vbcableLaunching ? "Starting installer…" : "Install VB-Cable"}
+              </BigButton>
+
+              {vbcableError && (
+                <p className="text-base text-red-300 break-words">{vbcableError}</p>
+              )}
+
+              <p className="text-sm text-gray-400">
+                In the VB-Cable window, click <strong>Install Driver</strong>, then{" "}
+                <strong>restart your computer</strong>. After the restart, come back here and
+                VB-Cable will be detected automatically.
+              </p>
+
+              <div className="pt-2 border-t border-gray-700">
+                <button
+                  onClick={() => setShowManualVbcable((v) => !v)}
+                  className="min-h-[44px] text-sm text-gray-300 hover:text-gray-100"
+                >
+                  {showManualVbcable ? "▾ Hide manual download" : "▸ Prefer to download it yourself?"}
+                </button>
+                {showManualVbcable && (
+                  <ol className="mt-2 list-decimal list-inside space-y-2 text-base text-gray-200">
+                    <li>
+                      Download from{" "}
+                      <a
+                        href="https://vb-audio.com/Cable/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-amber-400 underline"
+                      >
+                        vb-audio.com/Cable
+                      </a>
+                    </li>
+                    <li>Extract the zip file</li>
+                    <li>Right-click <code className="bg-gray-700 px-1 rounded">VBCABLE_Setup_x64.exe</code> → Run as administrator</li>
+                    <li>Click "Install Driver" and follow the prompts</li>
+                    <li><strong>Restart your computer</strong> after installation</li>
+                  </ol>
+                )}
+              </div>
             </div>
             <InfoBox variant="info">
               <p className="text-base">

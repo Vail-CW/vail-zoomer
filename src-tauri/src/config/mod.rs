@@ -66,6 +66,17 @@ pub struct Settings {
     // Linux-specific: whether virtual audio setup has been completed
     #[serde(default)]
     pub linux_audio_setup_completed: bool,
+
+    // UI scale factor for the whole interface (1.0 = normal). Lets users
+    // enlarge text and controls for readability.
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: f32,
+}
+
+/// Default UI scale (100%). Used by serde when an older settings file predates
+/// this field so existing users load at normal size.
+fn default_ui_scale() -> f32 {
+    1.0
 }
 
 impl Default for Settings {
@@ -88,6 +99,7 @@ impl Default for Settings {
             input_device: None,
             output_device: None,
             linux_audio_setup_completed: false,
+            ui_scale: 1.0,
         }
     }
 }

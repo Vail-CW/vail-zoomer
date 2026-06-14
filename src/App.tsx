@@ -39,6 +39,7 @@ interface Settings {
   input_device: string | null;
   output_device: string | null;
   linux_audio_setup_completed: boolean;
+  ui_scale: number;
 }
 
 // Linux virtual audio setup types
@@ -134,10 +135,19 @@ function App() {
     input_device: null,
     output_device: null,
     linux_audio_setup_completed: false,
+    ui_scale: 1.0,
   });
 
   // Ref to track current settings synchronously (React state is async)
   const settingsRef = useRef<Settings>(settings);
+
+  // Apply the user's UI scale by adjusting the root font size. Tailwind's text
+  // and spacing are rem-based, so this enlarges the whole interface uniformly
+  // without breaking the fixed-height layout. Clamped to a sane range.
+  useEffect(() => {
+    const scale = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
+    document.documentElement.style.fontSize = `${16 * scale}px`;
+  }, [settings.ui_scale]);
 
 
   // Ref to track the user's saved mic volume (for restoring after wizard mute)
@@ -230,22 +240,24 @@ function App() {
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
 
-      // Enforce: never start audio with a "system default" mic. Auto-pick the
-      // first non-virtual input when the saved choice is missing or no longer
-      // present in the system (e.g. the headset they used last time is
-      // unplugged). Picking a specific device avoids a class of issues users
-      // have hit historically when the system default got reassigned.
+      // Restore the user's saved mic if it's still present, but never auto-pick
+      // one for them — the user chooses their microphone explicitly in Step 3.
+      // Virtual devices (VailZoomer/BlackHole/VB-Cable) are routing endpoints,
+      // not mics, so they can never be the saved input either.
       const realInputs = inputDeviceList.filter((d) => {
         const n = (d.internal_name + " " + d.display_name).toLowerCase();
         return !n.includes("vailzoomer") && !n.includes("vail zoomer")
-          && !n.includes("blackhole");
+          && !n.includes("blackhole")
+          && !n.includes("cable") && !n.includes("vb-audio");
       });
       const savedInputStillValid = savedSettings.input_device
         && realInputs.some((d) => d.internal_name === savedSettings.input_device);
-      if (!savedInputStillValid && realInputs.length > 0) {
-        savedSettings.input_device = realInputs[0].internal_name;
-        setSelectedInputDevice(realInputs[0].internal_name);
-        updateSettings({ input_device: realInputs[0].internal_name });
+      if (!savedInputStillValid) {
+        // Saved mic is gone this session (or none saved): leave nothing
+        // selected so the picker shows "Choose a microphone…" instead of
+        // silently grabbing a device the user didn't pick. We keep the saved
+        // name on disk untouched so it auto-restores if the device returns.
+        setSelectedInputDevice(null);
       }
 
       // On macOS, auto-detect BlackHole and set it as the output device
@@ -1092,6 +1104,8 @@ function App() {
           micVolume={settings.mic_volume}
           micDucking={settings.mic_ducking}
           sidetoneRoute={settings.sidetone_route}
+          uiScale={settings.ui_scale}
+          onUiScaleChange={(scale) => updateSettings({ ui_scale: scale })}
           onSelectMidiDevice={connectMidi}
           onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
           onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}

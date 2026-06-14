@@ -61,6 +61,7 @@ interface SettingsSheetProps {
   micVolume: number;
   micDucking: boolean;
   sidetoneRoute: string;
+  uiScale: number;
 
   // Handlers
   onSelectMidiDevice: (device: string) => void;
@@ -74,6 +75,7 @@ interface SettingsSheetProps {
   onSidetoneVolumeChange: (vol: number) => void;
   onMicVolumeChange: (vol: number) => void;
   onMicDuckingChange: (enabled: boolean) => void;
+  onUiScaleChange: (scale: number) => void;
   onRefreshDevices: () => void;
   onRerunSetup: () => void;
   onClose: () => void;
@@ -97,6 +99,7 @@ export function SettingsSheet({
   micVolume,
   micDucking,
   sidetoneRoute,
+  uiScale,
   onSelectMidiDevice,
   onInputDeviceChange,
   onOutputDeviceChange,
@@ -108,6 +111,7 @@ export function SettingsSheet({
   onSidetoneVolumeChange,
   onMicVolumeChange,
   onMicDuckingChange,
+  onUiScaleChange,
   onRefreshDevices,
   onRerunSetup,
   onClose,
@@ -380,6 +384,45 @@ export function SettingsSheet({
                   }`}
                 />
               </button>
+            </div>
+          </Card>
+
+          {/* Display */}
+          <Card>
+            <h3 className="text-xl font-bold text-amber-400 mb-3">Display</h3>
+            <div className="space-y-2">
+              <label className="block text-lg text-gray-200 font-medium">
+                Text &amp; button size
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "Normal", value: 1.0 },
+                  { label: "Large", value: 1.15 },
+                  { label: "Largest", value: 1.3 },
+                ].map((opt) => {
+                  const active = Math.abs(uiScale - opt.value) < 0.01;
+                  return (
+                    <button
+                      key={opt.label}
+                      onClick={() => onUiScaleChange(opt.value)}
+                      className={`p-3 text-center rounded-xl border-2 transition-colors min-h-[64px] ${
+                        active
+                          ? "bg-amber-500/15 border-amber-400"
+                          : "bg-gray-800 border-gray-600 hover:border-gray-500"
+                      }`}
+                      aria-pressed={active}
+                    >
+                      <div className="text-base font-medium">{opt.label}</div>
+                      <div className="text-sm text-gray-300 mt-1">
+                        {Math.round(opt.value * 100)}%
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-sm text-gray-300">
+                Makes the app's text and controls bigger. Changes apply right away.
+              </p>
             </div>
           </Card>
 
