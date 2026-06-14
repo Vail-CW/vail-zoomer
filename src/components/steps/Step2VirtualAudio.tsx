@@ -82,16 +82,24 @@ export function Step2VirtualAudio({
   const [vbcableError, setVbcableError] = useState<string | null>(null);
   const [showManualVbcable, setShowManualVbcable] = useState(false);
 
-  // Launch the bundled VB-Cable installer (Windows). This is the only place the
-  // driver install happens — setup never touches it — so security software sees
-  // a deliberate, user-initiated action with a normal UAC prompt.
+  // Launch the bundled VB-Cable installer (Windows only). This is the one place
+  // the driver install happens. Setup never touches it, so security software
+  // sees a deliberate, user-initiated action with a normal UAC prompt.
   const handleInstallVbcable = async () => {
     setVbcableError(null);
     setVbcableLaunching(true);
     try {
       await invoke("install_vbcable");
     } catch (e) {
-      setVbcableError(String(e));
+      // The backend returns short, friendly strings. Show those as-is, but fall
+      // back to a plain message for anything unexpected, and keep the raw error
+      // in the console for debugging.
+      console.error("VB-Cable install failed:", e);
+      const msg =
+        typeof e === "string" && e.trim().length > 0
+          ? e
+          : "Could not start the VB-Cable installer. Please try the manual download below.";
+      setVbcableError(msg);
     } finally {
       setVbcableLaunching(false);
     }

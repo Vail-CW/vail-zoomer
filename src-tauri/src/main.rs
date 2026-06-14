@@ -438,7 +438,7 @@ fn install_vbcable(app: tauri::AppHandle) -> Result<(), String> {
         // `Start-Process -Verb RunAs` raises the UAC prompt and runs the
         // installer elevated. If the user cancels UAC, Start-Process throws and
         // PowerShell exits non-zero, which we surface as a friendly message.
-        let status = std::process::Command::new("powershell")
+        let status = std::process::Command::new("powershell.exe")
             .args([
                 "-NoProfile",
                 "-WindowStyle",
@@ -448,12 +448,18 @@ fn install_vbcable(app: tauri::AppHandle) -> Result<(), String> {
             ])
             .creation_flags(CREATE_NO_WINDOW)
             .status()
-            .map_err(|e| format!("Failed to launch installer: {e}"))?;
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "Could not find PowerShell (powershell.exe) on this system.".to_string()
+                } else {
+                    format!("Failed to launch installer: {e}")
+                }
+            })?;
 
         if status.success() {
             Ok(())
         } else {
-            Err("VB-Cable installer was not started — you may have declined the administrator prompt.".to_string())
+            Err("VB-Cable installer did not start. You may have declined the administrator prompt.".to_string())
         }
     }
 

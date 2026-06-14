@@ -48,17 +48,18 @@ export const isVirtualOutput = (d: DeviceInfo): boolean => {
  * here to keep it out of the mic picker.
  */
 export const isVirtualInput = (d: DeviceInfo): boolean => {
-  const i = d.internal_name.toLowerCase();
-  const n = d.display_name.toLowerCase();
+  const text = `${d.internal_name} ${d.display_name}`.toLowerCase();
   return (
-    i.includes("vailzoomer") ||
-    n.includes("vail zoomer") ||
-    i.includes("blackhole") ||
-    n.includes("blackhole") ||
-    i.includes("cable") ||
-    n.includes("cable") ||
-    i.includes("vb-audio") ||
-    n.includes("vb-audio")
+    text.includes("vailzoomer") ||
+    text.includes("vail zoomer") ||
+    text.includes("blackhole") ||
+    // VB-Cable shows up as "CABLE Input/Output (VB-Audio Virtual Cable)". Match
+    // those specific names rather than a bare "cable" so we do not accidentally
+    // hide a real microphone that just happens to have "cable" in its name.
+    text.includes("vb-audio") ||
+    text.includes("vb-cable") ||
+    text.includes("cable input") ||
+    text.includes("cable output")
   );
 };
 
