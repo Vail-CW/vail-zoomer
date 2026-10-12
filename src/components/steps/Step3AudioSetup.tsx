@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WizardLayout } from "../wizard/WizardLayout";
-import { InfoBox } from "../shared/InfoBox";
+import { Callout } from "../shared/Callout";
+import { Card } from "../shared/Card";
 import { AudioDiagnosticsModal } from "./AudioDiagnosticsModal";
 import {
   MicSection,
   SidetoneRouteButtons,
   LocalOutputPicker,
-  VirtualOutputStatusLine,
+  VirtualOutputRow,
   isVirtualInput,
-  getVirtualOutputStatus,
   DeviceInfo,
   OSType,
 } from "../audio";
@@ -18,14 +18,12 @@ interface Step3AudioSetupProps {
   inputDevices: DeviceInfo[];
   outputDevices: DeviceInfo[];
   selectedInputDevice: string | null;
-  selectedOutputDevice: string | null;
   selectedLocalDevice: string | null;
   sidetoneRoute: string;
   micLevel: number;
   micVolume: number;
   currentOS: OSType;
   onInputDeviceChange: (device: string | null) => void;
-  onOutputDeviceChange: (device: string | null) => void;
   onLocalDeviceChange: (device: string | null) => void;
   onSidetoneRouteChange: (route: string) => void;
   onMicVolumeChange: (vol: number) => void;
@@ -40,7 +38,6 @@ export function Step3AudioSetup({
   inputDevices,
   outputDevices,
   selectedInputDevice,
-  selectedOutputDevice,
   selectedLocalDevice,
   sidetoneRoute,
   micLevel,
@@ -79,52 +76,34 @@ export function Step3AudioSetup({
     setTimeout(() => setDiagCopied(false), 1500);
   };
 
-  // Check if VailZoomer setup is complete (Linux only)
-  const vailZoomerExists = currentOS === "linux" && outputDevices.some(d =>
-    d.internal_name === "VailZoomer" ||
-    d.display_name.includes("VailZoomer") ||
-    d.display_name.includes("Vail Zoomer")
-  );
-  const needsSetup = currentOS === "linux" && !vailZoomerExists;
-
-  // We intentionally do NOT auto-select a microphone. The user picks their mic
-  // explicitly — the picker (which hides virtual devices like VB-Cable) shows
-  // "Choose a microphone…" until they do.
+  // We intentionally do NOT auto-select a microphone. The user picks it
+  // explicitly; the picker hides virtual devices like VB-Cable.
   //
-  // Gate the "Next" button until a real mic is chosen, so users can't sail past
-  // this step with no microphone selected. If the machine genuinely has no mic
-  // to pick, we don't trap them here.
+  // Gate "Next" until a real mic is chosen so users cannot sail past this
+  // step with no microphone. If the machine genuinely has no mic, we do not
+  // trap them here.
   const hasRealMic = inputDevices.some((d) => !isVirtualInput(d));
   const micChosen =
     !!selectedInputDevice &&
     inputDevices.some((d) => d.internal_name === selectedInputDevice && !isVirtualInput(d));
   const needsMicChoice = hasRealMic && !micChosen;
 
-  const virtualOutputStatus = getVirtualOutputStatus(outputDevices, selectedOutputDevice, currentOS);
-
   return (
     <WizardLayout
       currentStep={3}
       totalSteps={4}
       stepLabels={["Keyer", "Virtual audio", "Audio", "Video app"]}
-      title="Pick your audio devices"
+      title="Audio devices"
+      subtitle="Pick your microphone and where you hear the sidetone."
       onBack={onBack}
       onNext={onNext}
       nextDisabled={needsMicChoice}
     >
-      <div className="max-w-xl mx-auto space-y-4">
-        {/* Warning if VailZoomer not set up yet */}
-        {needsSetup && micVolume === 0 && (
-          <InfoBox variant="warning">
-            <p className="text-base">
-              <strong>Microphone is muted</strong> to prevent echo. Finish the previous step
-              to enable your microphone.
-            </p>
-          </InfoBox>
-        )}
+      <VirtualOutputRow outputDevices={outputDevices} currentOS={currentOS} onSetup={onBack} />
 
+      <Card>
         <MicSection
-          label="Which microphone are you talking into?"
+          label="Microphone"
           inputDevices={inputDevices}
           selectedInputDevice={selectedInputDevice}
           micLevel={micLevel}
@@ -134,38 +113,32 @@ export function Step3AudioSetup({
           onRefreshDevices={onRefreshDevices}
           onOpenDiagnostics={openDiagnostics}
         />
-
-        {needsMicChoice && (
-          <InfoBox variant="warning">
-            <p className="text-base">
-              <strong>Choose your microphone above</strong> to continue. The “Next” button
-              turns on once a microphone is selected.
-            </p>
-          </InfoBox>
+        {needsMicChoice && <p className="mt-2 text-sm text-warn-fg">Choose a microphone to continue.</p>}
+        {micVolume === 0 && !needsMicChoice && (
+          <p className="mt-2 text-sm text-warn-fg">Your mic is muted. Drag the slider to unmute.</p>
         )}
+      </Card>
 
-        <VirtualOutputStatusLine status={virtualOutputStatus} />
+      <Card>
+        <div className="space-y-3">
+          <SidetoneRouteButtons route={sidetoneRoute} onChange={onSidetoneRouteChange} showAdapterMuteHint />
+          {sidetoneRoute === "Both" && (
+            <LocalOutputPicker
+              outputDevices={outputDevices}
+              selectedLocalDevice={selectedLocalDevice}
+              onLocalDeviceChange={onLocalDeviceChange}
+              onRefreshDevices={onRefreshDevices}
+            />
+          )}
+        </div>
+      </Card>
 
-        <SidetoneRouteButtons
-          route={sidetoneRoute}
-          onChange={onSidetoneRouteChange}
-          showAdapterMuteHint
-        />
+      {currentOS === "linux" && (
+        <Callout tone="info">If a device is missing, use "Don't see your microphone?" to copy diagnostics.</Callout>
+      )}
 
-        {sidetoneRoute === "Both" && (
-          <LocalOutputPicker
-            outputDevices={outputDevices}
-            selectedLocalDevice={selectedLocalDevice}
-            onLocalDeviceChange={onLocalDeviceChange}
-            onRefreshDevices={onRefreshDevices}
-          />
-        )}
-      </div>
-
-      {/* Diagnostics modal — last-resort visibility for when a mic doesn't
-          appear in the filtered dropdown. Dumps the full system audio state
-          (sources, sinks, BT profiles, ALSA, packages) for the user to
-          share with the developer. */}
+      {/* Diagnostics: last-resort visibility for when a mic does not appear in
+          the filtered dropdown. */}
       {diagOpen && (
         <AudioDiagnosticsModal
           diagText={diagText}

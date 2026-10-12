@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WizardLayout } from "../wizard/WizardLayout";
-import { InfoBox } from "../shared/InfoBox";
-import { BigButton } from "../shared/BigButton";
-
-interface DeviceInfo {
-  display_name: string;
-  internal_name: string;
-}
+import { Card } from "../shared/Card";
+import { Button } from "../shared/Button";
+import { Callout } from "../shared/Callout";
+import { StatusDot } from "../shared/StatusDot";
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, DownloadIcon, RefreshIcon, SpinnerIcon } from "../shared/icons";
+import { DeviceInfo, findVirtualOutput } from "../audio/audioHelpers";
 
 interface Step2VirtualAudioProps {
   currentOS: "windows" | "macos" | "linux";
@@ -25,6 +24,35 @@ interface Step2VirtualAudioProps {
   linuxInstallInProgress?: boolean;
 }
 
+const Link = ({ href, children }: { href: string; children: React.ReactNode }) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="rounded text-accent-text underline underline-offset-2 hover:opacity-80"
+  >
+    {children}
+  </a>
+);
+
+const Code = ({ children }: { children: React.ReactNode }) => (
+  <code className="rounded-sm bg-surface3 px-1 py-0.5 font-mono text-sm">{children}</code>
+);
+
+function DisclosureButton({ open, onClick, children }: { open: boolean; onClick: () => void; children: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      className="flex h-8 items-center gap-1 rounded text-sm text-muted transition-colors hover:text-ink"
+    >
+      {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
+      {children}
+    </button>
+  );
+}
+
 export function Step2VirtualAudio({
   currentOS,
   outputDevices,
@@ -39,33 +67,16 @@ export function Step2VirtualAudio({
   linuxMissingPkgs = [],
   linuxInstallInProgress = false,
 }: Step2VirtualAudioProps) {
-  // Detect whether the platform-specific virtual audio driver is already
-  // installed. This lets Mac/Windows users sail through Step 2 like Linux
-  // already does, instead of having to read install instructions for
-  // software they already installed weeks ago.
-  const isMacDriverInstalled = outputDevices.some(d => {
-    const i = d.internal_name.toLowerCase();
-    const n = d.display_name.toLowerCase();
-    return i.includes("blackhole") || n.includes("blackhole");
-  });
-  const isWinDriverInstalled = outputDevices.some(d => {
-    const i = d.internal_name.toLowerCase();
-    const n = d.display_name.toLowerCase();
-    return i.includes("cable") || n.includes("cable") || i.includes("vb-audio") || n.includes("vb-audio");
-  });
+  // Detect whether the platform's virtual audio driver is already installed,
+  // so Mac/Windows users sail through this step like Linux users do.
   const driverInstalled =
-    (currentOS === "macos" && isMacDriverInstalled) ||
-    (currentOS === "windows" && isWinDriverInstalled);
+    (currentOS === "macos" || currentOS === "windows") && findVirtualOutput(outputDevices, currentOS) !== null;
 
   // Auto-advance Mac/Windows users past this step when the driver is already
-  // present — mirrors the Linux flow below.
+  // present, mirroring the Linux flow below.
   const hasAutoAdvancedNonLinux = useRef(false);
   useEffect(() => {
-    if (
-      (currentOS === "macos" || currentOS === "windows")
-      && driverInstalled
-      && !hasAutoAdvancedNonLinux.current
-    ) {
+    if ((currentOS === "macos" || currentOS === "windows") && driverInstalled && !hasAutoAdvancedNonLinux.current) {
       hasAutoAdvancedNonLinux.current = true;
       const t = setTimeout(() => onNext(), 800);
       return () => clearTimeout(t);
@@ -92,13 +103,12 @@ export function Step2VirtualAudio({
       await invoke("install_vbcable");
     } catch (e) {
       // The backend returns short, friendly strings. Show those as-is, but fall
-      // back to a plain message for anything unexpected, and keep the raw error
-      // in the console for debugging.
+      // back to a plain message for anything unexpected.
       console.error("VB-Cable install failed:", e);
       const msg =
         typeof e === "string" && e.trim().length > 0
           ? e
-          : "Could not start the VB-Cable installer. Please try the manual download below.";
+          : "Could not start the VB-Cable installer. Try the manual download below.";
       setVbcableError(msg);
     } finally {
       setVbcableLaunching(false);
@@ -111,7 +121,7 @@ export function Step2VirtualAudio({
     setTimeout(() => setCopiedKind((k) => (k === kind ? null : k)), 1500);
   };
 
-  // Auto-run setup on Linux when component mounts (unless it already
+  // Auto-run setup on Linux when the component mounts (unless it already
   // succeeded out of band via the initialize() flow at app launch).
   useEffect(() => {
     if (currentOS === "linux" && onSetupLinuxAudio && !hasAutoStarted.current && !linuxSetupComplete) {
@@ -120,8 +130,8 @@ export function Step2VirtualAudio({
     }
   }, [currentOS, onSetupLinuxAudio, linuxSetupComplete]);
 
-  // On Linux, virtual audio setup is fully automatic — once it completes,
-  // skip the user past this screen so they never have to click "Next".
+  // On Linux, virtual audio setup is fully automatic. Once it completes, skip
+  // the user past this screen.
   useEffect(() => {
     if (currentOS === "linux" && linuxSetupComplete && !hasAutoAdvanced.current) {
       hasAutoAdvanced.current = true;
@@ -130,286 +140,207 @@ export function Step2VirtualAudio({
     }
   }, [currentOS, linuxSetupComplete, onNext]);
 
-  // Auto-scroll log to bottom
+  // Keep the log scrolled to the newest line.
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [linuxSetupLog]);
+
+  // Backend log lines may start with a check (0x2713), cross (0x2717) or
+  // warning (0x26A0) mark; classify by code point rather than printing them.
+  const logTone = (line: string) => {
+    const first = line.codePointAt(0);
+    if (first === 0x2713 || line.startsWith("OK")) return "text-success-fg";
+    if (first === 0x2717 || line.startsWith("Error")) return "text-danger-fg";
+    if (first === 0x26a0 || line.startsWith("Warning")) return "text-warn-fg";
+    return "text-ink";
+  };
+
+  const driverName = currentOS === "macos" ? "BlackHole" : "VB-Cable";
 
   return (
     <WizardLayout
       currentStep={2}
       totalSteps={4}
       stepLabels={["Keyer", "Virtual audio", "Audio", "Video app"]}
-      title="Install virtual audio"
+      title="Virtual audio"
+      subtitle="A small audio bridge sends your voice and the morse tone to Zoom together."
       onBack={onBack}
       onNext={onNext}
     >
-      <div className="max-w-xl mx-auto space-y-4">
-        {!driverInstalled && (
-          <InfoBox variant="info">
-            <p className="text-base">
-              Zoom can't hear morse tones on its own. We'll install a small audio bridge so
-              your voice and the tones go to Zoom together.
+      {(currentOS === "macos" || currentOS === "windows") && driverInstalled && !forceShowInstall && (
+        <Card>
+          <div className="flex items-center gap-2">
+            <StatusDot tone="success" />
+            <p className="flex-1 text-base">{driverName} detected. Moving on.</p>
+            <Button variant="ghost" onClick={() => setForceShowInstall(true)}>
+              Show install steps
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {currentOS === "windows" && (!driverInstalled || forceShowInstall) && (
+        <Card title="Install VB-Cable (free)" description="A virtual audio driver from VB-Audio. Windows asks for administrator permission.">
+          <div className="space-y-3">
+            <Button
+              variant="primary"
+              size="md"
+              icon={<DownloadIcon />}
+              loading={vbcableLaunching}
+              onClick={handleInstallVbcable}
+            >
+              {vbcableLaunching ? "Starting installer" : "Install VB-Cable"}
+            </Button>
+            {vbcableError && <p className="break-words text-sm text-danger-fg">{vbcableError}</p>}
+            <p className="text-sm text-muted">
+              In the VB-Cable window click <strong className="text-ink">Install Driver</strong>, then{" "}
+              <strong className="text-ink">restart your computer</strong>. It is detected automatically when you
+              come back.
             </p>
-          </InfoBox>
-        )}
-
-        {/* Detected — Mac/Windows fast path */}
-        {(currentOS === "macos" || currentOS === "windows") && driverInstalled && !forceShowInstall && (
-          <div className="bg-surface2 rounded-2xl p-5 flex items-start gap-3">
-            <span className="text-3xl text-green-400 leading-none">✓</span>
-            <div className="flex-1">
-              <p className="text-lg text-green-300 font-medium">
-                {currentOS === "macos" ? "BlackHole detected" : "VB-Cable detected"}
-              </p>
-              <p className="text-base text-ink mt-1">
-                You're already set. Moving you to the next step…
-              </p>
-              <button
-                onClick={() => setForceShowInstall(true)}
-                className="mt-3 min-h-[44px] px-3 text-sm text-muted hover:text-accent-text underline"
-              >
-                Show install instructions anyway
-              </button>
+            <div className="border-t border-line pt-2">
+              <DisclosureButton open={showManualVbcable} onClick={() => setShowManualVbcable((v) => !v)}>
+                Download it yourself
+              </DisclosureButton>
+              {showManualVbcable && (
+                <ol className="mt-1 list-inside list-decimal space-y-1 text-base">
+                  <li>
+                    Download from <Link href="https://vb-audio.com/Cable/">vb-audio.com/Cable</Link>
+                  </li>
+                  <li>Extract the zip file</li>
+                  <li>
+                    Right-click <Code>VBCABLE_Setup_x64.exe</Code> and choose Run as administrator
+                  </li>
+                  <li>Click Install Driver, then restart your computer</li>
+                </ol>
+              )}
             </div>
           </div>
-        )}
+        </Card>
+      )}
 
-        {currentOS === "windows" && (!isWinDriverInstalled || forceShowInstall) && (
+      {currentOS === "macos" && (!driverInstalled || forceShowInstall) && (
+        <Card title="Install BlackHole (free)" description="It is detected automatically when you come back.">
+          <ol className="list-inside list-decimal space-y-1 text-base">
+            <li>
+              Download <strong>BlackHole 2ch</strong> from{" "}
+              <Link href="https://existential.audio/blackhole/">existential.audio/blackhole</Link>
+            </li>
+            <li>Open the downloaded .pkg file and follow the prompts</li>
+            <li>If macOS asks, allow the system extension in System Settings</li>
+          </ol>
+        </Card>
+      )}
+
+      {currentOS === "linux" && (
+        <Card>
           <div className="space-y-3">
-            <div className="bg-surface2 rounded-2xl p-5 space-y-3">
-              <h3 className="text-xl font-semibold text-accent-text">Install VB-Cable (free)</h3>
-              <p className="text-base text-ink">
-                VB-Cable is a free virtual audio driver from VB-Audio. Click below to run the
-                installer — Windows will ask for administrator permission.
-              </p>
-
-              <BigButton
-                onClick={handleInstallVbcable}
-                disabled={vbcableLaunching}
-                className="!min-h-[48px] !py-2"
-              >
-                {vbcableLaunching ? "Starting installer…" : "Install VB-Cable"}
-              </BigButton>
-
-              {vbcableError && (
-                <p className="text-base text-red-300 break-words">{vbcableError}</p>
-              )}
-
-              <p className="text-sm text-muted">
-                In the VB-Cable window, click <strong>Install Driver</strong>, then{" "}
-                <strong>restart your computer</strong>. After the restart, come back here and
-                VB-Cable will be detected automatically.
-              </p>
-
-              <div className="pt-2 border-t border-line">
-                <button
-                  onClick={() => setShowManualVbcable((v) => !v)}
-                  className="min-h-[44px] text-sm text-muted hover:text-ink"
-                >
-                  {showManualVbcable ? "▾ Hide manual download" : "▸ Prefer to download it yourself?"}
-                </button>
-                {showManualVbcable && (
-                  <ol className="mt-2 list-decimal list-inside space-y-2 text-base text-ink">
-                    <li>
-                      Download from{" "}
-                      <a
-                        href="https://vb-audio.com/Cable/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-accent-text underline"
-                      >
-                        vb-audio.com/Cable
-                      </a>
-                    </li>
-                    <li>Extract the zip file</li>
-                    <li>Right-click <code className="bg-surface px-1 rounded">VBCABLE_Setup_x64.exe</code> → Run as administrator</li>
-                    <li>Click "Install Driver" and follow the prompts</li>
-                    <li><strong>Restart your computer</strong> after installation</li>
-                  </ol>
-                )}
+            {linuxSetupInProgress && (
+              <div className="flex items-center gap-2 text-base">
+                <SpinnerIcon className="text-muted" />
+                <span>Setting up audio routing</span>
               </div>
-            </div>
-            <InfoBox variant="info">
-              <p className="text-base">
-                After installing and restarting, come back here — VB-Cable will be detected
-                automatically and we'll move you on.
-              </p>
-            </InfoBox>
-          </div>
-        )}
+            )}
 
-        {currentOS === "macos" && (!isMacDriverInstalled || forceShowInstall) && (
-          <div className="space-y-3">
-            <div className="bg-surface2 rounded-2xl p-5 space-y-3">
-              <h3 className="text-xl font-semibold text-accent-text">Install BlackHole (free)</h3>
-              <ol className="list-decimal list-inside space-y-2 text-base text-ink">
-                <li>
-                  Download <strong>BlackHole 2ch</strong> from{" "}
-                  <a
-                    href="https://existential.audio/blackhole/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent-text underline"
-                  >
-                    existential.audio/blackhole
-                  </a>
-                </li>
-                <li>Open the downloaded .pkg file</li>
-                <li>Follow the installer prompts</li>
-                <li>If macOS asks, allow the system extension in System Settings</li>
-              </ol>
-            </div>
-            <InfoBox variant="info">
-              <p className="text-base">
-                After installing, come back here — BlackHole will be detected automatically.
-              </p>
-            </InfoBox>
-          </div>
-        )}
+            {!linuxSetupInProgress && linuxSetupComplete && !linuxSetupError && (
+              <div className="flex items-center gap-2">
+                <StatusDot tone="success" />
+                <p className="text-base">Audio routing is ready. It comes back on every login.</p>
+              </div>
+            )}
 
-        {currentOS === "linux" && (
-          <div className="space-y-3">
-            {/* Single status card — verbose log lives behind Advanced. */}
-            <div className="bg-surface2 rounded-2xl p-5 space-y-3">
-              {/* Working state */}
-              {linuxSetupInProgress && (
-                <div className="flex items-center gap-3">
-                  <span className="inline-block w-4 h-4 rounded-full bg-amber-400 animate-pulse" />
-                  <p className="text-lg text-accent-text">Setting up audio routing…</p>
-                </div>
-              )}
-
-              {/* Success state */}
-              {!linuxSetupInProgress && linuxSetupComplete && !linuxSetupError && (
-                <div className="flex items-center gap-3">
-                  <span className="text-3xl text-green-400 leading-none">✓</span>
-                  <div>
-                    <p className="text-lg text-green-300 font-medium">Audio routing is ready</p>
-                    <p className="text-base text-ink">
-                      Virtual mic + speaker installed and will come back on every login.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Missing packages — fixable with one click */}
-              {!linuxSetupInProgress && linuxMissingPkgs.length > 0 && onInstallLinuxAudioPrereqs && (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3">
-                    <span className="text-3xl text-accent-text leading-none">!</span>
-                    <div>
-                      <p className="text-lg text-accent-text font-medium">Missing audio packages</p>
-                      <p className="text-base text-ink">
-                        Install {linuxMissingPkgs.join(", ")} — you'll see one password prompt.
-                      </p>
-                    </div>
-                  </div>
-                  <BigButton
+            {!linuxSetupInProgress && linuxMissingPkgs.length > 0 && onInstallLinuxAudioPrereqs && (
+              <Callout
+                tone="warn"
+                title="Missing audio packages"
+                action={
+                  <Button
+                    variant="primary"
+                    loading={linuxInstallInProgress}
                     onClick={() => onInstallLinuxAudioPrereqs()}
-                    disabled={linuxInstallInProgress}
-                    className="!min-h-[48px] !py-2"
                   >
-                    {linuxInstallInProgress ? "Installing…" : "Install now"}
-                  </BigButton>
-                </div>
-              )}
+                    {linuxInstallInProgress ? "Installing" : "Install now"}
+                  </Button>
+                }
+              >
+                Install {linuxMissingPkgs.join(", ")}. You will see one password prompt.
+              </Callout>
+            )}
 
-              {/* Error state (no missing packages — actual failure) */}
-              {!linuxSetupInProgress && linuxSetupError && linuxMissingPkgs.length === 0 && (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3">
-                    <span className="text-3xl text-red-400 leading-none">✗</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-lg text-red-300 font-medium">Audio setup failed</p>
-                      <p className="text-base text-ink mt-1 break-words">{linuxSetupError}</p>
-                      <p className="text-sm text-muted mt-2">
-                        Copy the error and share it with the developers if retrying doesn't fix it.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    {onSetupLinuxAudio && (
-                      <BigButton
-                        onClick={() => onSetupLinuxAudio()}
-                        disabled={linuxInstallInProgress}
-                        className="!min-h-[48px] !py-2 flex-1"
-                      >
-                        Retry
-                      </BigButton>
-                    )}
-                    <button
-                      onClick={() =>
-                        copyToClipboard(
-                          `Vail Zoomer audio setup error:\n${linuxSetupError}\n\n--- Full log ---\n${linuxSetupLog.join("\n")}`,
-                          "error",
-                        )
-                      }
-                      className="min-h-[44px] px-3 text-base bg-surface2 hover:bg-line text-ink rounded-lg"
-                    >
-                      {copiedKind === "error" ? "Copied" : "Copy for developer"}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Advanced toggle — opens the full log only on demand */}
-              <div className="pt-2 border-t border-line">
-                <button
-                  onClick={() => setShowAdvanced((v) => !v)}
-                  className="min-h-[44px] text-base text-muted hover:text-ink"
-                >
-                  {showAdvanced ? "▾ Hide advanced details" : "▸ Show advanced details"}
-                </button>
-              </div>
-
-              {showAdvanced && (
-                <div className="space-y-2">
-                  <div className="relative">
-                    <div className="bg-app rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-sm">
-                      {linuxSetupLog.length === 0 ? (
-                        <p className="text-muted">No log yet.</p>
-                      ) : (
-                        linuxSetupLog.map((line, i) => (
-                          <div
-                            key={i}
-                            className={
-                              line.startsWith("✓") ? "text-green-400" :
-                              line.startsWith("✗") ? "text-red-400" :
-                              line.startsWith("Warning") || line.startsWith("⚠") ? "text-accent-text" :
-                              "text-ink"
-                            }
-                          >
-                            {line}
-                          </div>
-                        ))
-                      )}
-                      <div ref={logEndRef} />
-                    </div>
-                    {linuxSetupLog.length > 0 && (
-                      <button
-                        onClick={() => copyToClipboard(linuxSetupLog.join("\n"), "log")}
-                        className="absolute top-2 right-2 min-h-[36px] text-sm bg-surface2 hover:bg-line text-ink px-2 py-1 rounded"
-                      >
-                        {copiedKind === "log" ? "Copied" : "Copy log"}
-                      </button>
-                    )}
-                  </div>
-                  {onSetupLinuxAudio && !linuxSetupInProgress && (
-                    <button
-                      onClick={() => onSetupLinuxAudio()}
+            {!linuxSetupInProgress && linuxSetupError && linuxMissingPkgs.length === 0 && (
+              <Callout tone="danger" title="Audio setup failed">
+                <p className="break-words">{linuxSetupError}</p>
+                <div className="mt-2 flex gap-2">
+                  {onSetupLinuxAudio && (
+                    <Button
+                      variant="primary"
+                      icon={<RefreshIcon />}
                       disabled={linuxInstallInProgress}
-                      className="min-h-[44px] text-base text-accent-text hover:text-accent-text underline"
+                      onClick={() => onSetupLinuxAudio()}
                     >
-                      Re-run setup
-                    </button>
+                      Retry
+                    </Button>
+                  )}
+                  <Button
+                    icon={<CopyIcon />}
+                    onClick={() =>
+                      copyToClipboard(
+                        `Vail Zoomer audio setup error:\n${linuxSetupError}\n\n--- Full log ---\n${linuxSetupLog.join("\n")}`,
+                        "error",
+                      )
+                    }
+                  >
+                    {copiedKind === "error" ? "Copied" : "Copy for developer"}
+                  </Button>
+                </div>
+              </Callout>
+            )}
+
+            <div className="border-t border-line pt-2">
+              <DisclosureButton open={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
+                Details
+              </DisclosureButton>
+            </div>
+
+            {showAdvanced && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <div className="max-h-48 overflow-y-auto rounded border border-line bg-app p-3 font-mono text-sm">
+                    {linuxSetupLog.length === 0 ? (
+                      <p className="text-muted">No log yet.</p>
+                    ) : (
+                      linuxSetupLog.map((line, i) => (
+                        <div key={i} className={logTone(line)}>
+                          {line}
+                        </div>
+                      ))
+                    )}
+                    <div ref={logEndRef} />
+                  </div>
+                  {linuxSetupLog.length > 0 && (
+                    <Button
+                      className="absolute right-2 top-2"
+                      icon={<CopyIcon />}
+                      onClick={() => copyToClipboard(linuxSetupLog.join("\n"), "log")}
+                    >
+                      {copiedKind === "log" ? "Copied" : "Copy log"}
+                    </Button>
                   )}
                 </div>
-              )}
-            </div>
+                {onSetupLinuxAudio && !linuxSetupInProgress && (
+                  <Button
+                    variant="ghost"
+                    icon={<RefreshIcon />}
+                    disabled={linuxInstallInProgress}
+                    onClick={() => onSetupLinuxAudio()}
+                  >
+                    Re-run setup
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </Card>
+      )}
     </WizardLayout>
   );
 }

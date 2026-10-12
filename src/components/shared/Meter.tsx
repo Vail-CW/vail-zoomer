@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
-interface LevelMeterProps {
+interface MeterProps {
   /** Linear peak level, 0..1 */
   level: number;
-  label?: string;
+  label: string;
+  /** Hide the dB readout (tight layouts). */
+  hideReadout?: boolean;
 }
 
 const MIN_DB = -60;
@@ -20,14 +22,15 @@ function dbToPos(db: number): number {
   return Math.min(1, Math.max(0, (db - MIN_DB) / -MIN_DB));
 }
 function formatDb(db: number): string {
-  return !isFinite(db) || db <= MIN_DB ? "-inf" : `${db.toFixed(1)} dB`;
+  return !isFinite(db) || db <= MIN_DB ? "-inf dB" : `${db.toFixed(0)} dB`;
 }
 
-export function LevelMeter({ level, label }: LevelMeterProps) {
+/** Thin level meter: 6px bar, peak tick, clip dot, fixed-width dB readout. */
+export function Meter({ level, label, hideReadout = false }: MeterProps) {
   const targetRef = useRef(0);
   const maskRef = useRef<HTMLDivElement>(null);
   const peakRef = useRef<HTMLDivElement>(null);
-  const [readout, setReadout] = useState("-inf");
+  const [readout, setReadout] = useState("-inf dB");
   const [clipped, setClipped] = useState(false);
 
   useEffect(() => {
@@ -35,8 +38,8 @@ export function LevelMeter({ level, label }: LevelMeterProps) {
     if (level >= 0.99) setClipped(true);
   }, [level]);
 
-  // Smoothing runs in JS (fast attack, ~300 ms release); DOM is updated
-  // directly so there is no CSS transition smearing.
+  // Smoothing runs in JS (fast attack, ~300 ms release) and the DOM is written
+  // directly, so there is no CSS transition smearing the bar.
   useEffect(() => {
     let raf = 0;
     let last = performance.now();
@@ -99,33 +102,31 @@ export function LevelMeter({ level, label }: LevelMeterProps) {
   const a = ((-6 - MIN_DB) / -MIN_DB) * 100;
 
   return (
-    <div className="w-full flex flex-col gap-1" role="group" aria-label={label ? `${label} level` : "Level"}>
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 h-3 rounded-full overflow-hidden bg-surface2">
-          <div
-            className="absolute inset-0"
-            style={{
-              background: `linear-gradient(to right, rgb(34 197 94) 0%, rgb(34 197 94) ${g}%, rgb(251 191 36) ${g}%, rgb(251 191 36) ${a}%, rgb(239 68 68) ${a}%, rgb(239 68 68) 100%)`,
-            }}
-          />
-          <div ref={maskRef} className="absolute top-0 right-0 h-full bg-surface2" style={{ width: "100%" }} />
-          <div
-            ref={peakRef}
-            className="absolute top-0 h-full w-[3px] -ml-[1.5px] bg-ink"
-            style={{ left: "0%", opacity: 0 }}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => setClipped(false)}
-          className={`shrink-0 w-4 h-4 rounded-sm border ${
-            clipped ? "bg-red-500 border-red-400" : "bg-surface2 border-line"
-          }`}
-          title={clipped ? "Clipped. Click to reset" : "No clipping"}
-          aria-label={clipped ? "Clipping detected. Click to reset clip indicator" : "Clip indicator, no clipping"}
+    <div className="flex w-full items-center gap-2" role="group" aria-label={`${label} level`}>
+      <div className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface3">
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `linear-gradient(to right, rgb(var(--success)) 0%, rgb(var(--success)) ${g}%, rgb(var(--warn)) ${g}%, rgb(var(--warn)) ${a}%, rgb(var(--danger)) ${a}%, rgb(var(--danger)) 100%)`,
+          }}
+        />
+        <div ref={maskRef} className="absolute right-0 top-0 h-full bg-surface3" style={{ width: "100%" }} />
+        <div
+          ref={peakRef}
+          className="absolute top-0 -ml-px h-full w-0.5 bg-ink"
+          style={{ left: "0%", opacity: 0 }}
         />
       </div>
-      <span className="text-xs text-muted tabular-nums text-center">{readout}</span>
+      <button
+        type="button"
+        onClick={() => setClipped(false)}
+        className={`h-2 w-2 shrink-0 rounded-full ${clipped ? "bg-danger" : "bg-surface3"}`}
+        title={clipped ? "Clipped. Click to reset" : "No clipping"}
+        aria-label={clipped ? "Clipping detected. Click to reset clip indicator" : "Clip indicator, no clipping"}
+      />
+      {!hideReadout && (
+        <span className="w-12 shrink-0 text-right text-xs tabular-nums text-muted">{readout}</span>
+      )}
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { SegmentedControl } from "../shared/SegmentedControl";
+
 interface SidetoneRouteButtonsProps {
   route: string;
   onChange: (route: string) => void;
@@ -10,41 +12,25 @@ export function SidetoneRouteButtons({
   route,
   onChange,
   showAdapterMuteHint = false,
-  label = "Where do you want to hear your sidetone?",
+  label = "Hear your sidetone on",
 }: SidetoneRouteButtonsProps) {
   return (
-    <div className="space-y-2">
-      <label className="block text-lg text-ink font-medium">{label}</label>
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => onChange("OutputOnly")}
-          className={`p-4 text-center rounded-xl border-2 transition-colors min-h-[72px] ${
-            route === "OutputOnly"
-              ? "bg-amber-500/15 border-amber-400"
-              : "bg-surface2 border-line hover:border-muted"
-          }`}
-          aria-pressed={route === "OutputOnly"}
-        >
-          <div className="text-base font-medium">Adapter only</div>
-          <div className="text-sm text-muted mt-1">Built-in speaker</div>
-        </button>
-        <button
-          onClick={() => onChange("Both")}
-          className={`p-4 text-center rounded-xl border-2 transition-colors min-h-[72px] ${
-            route === "Both"
-              ? "bg-amber-500/15 border-amber-400"
-              : "bg-surface2 border-line hover:border-muted"
-          }`}
-          aria-pressed={route === "Both"}
-        >
-          <div className="text-base font-medium">Adapter + computer</div>
-          <div className="text-sm text-muted mt-1">Both speakers</div>
-        </button>
-      </div>
+    <div className="space-y-1.5">
+      <p id="sidetone-route-label" className="text-base text-ink">
+        {label}
+      </p>
+      <SegmentedControl
+        aria-label={label}
+        value={route === "Both" ? "Both" : "OutputOnly"}
+        onChange={onChange}
+        options={[
+          { value: "OutputOnly", label: "Adapter only" },
+          { value: "Both", label: "Adapter + computer" },
+        ]}
+      />
       {showAdapterMuteHint && route === "OutputOnly" && (
-        <p className="text-sm text-muted pt-1">
-          To mute the Vail Adapter's built-in speaker, hold the dit paddle down for
-          10 seconds. Power-cycle the adapter to restore it.
+        <p className="text-sm text-muted">
+          To silence the adapter's speaker, hold the dit paddle for 10 seconds. Power-cycle to restore it.
         </p>
       )}
     </div>

@@ -1,58 +1,43 @@
+import { Fragment } from "react";
+import { CheckIcon } from "../shared/icons";
+
 interface StepIndicatorProps {
   currentStep: number;
   totalSteps: number;
   stepLabels?: string[];
 }
 
-export function StepIndicator({
-  currentStep,
-  totalSteps,
-  stepLabels = [],
-}: StepIndicatorProps) {
+export function StepIndicator({ currentStep, totalSteps, stepLabels = [] }: StepIndicatorProps) {
+  const steps = Array.from({ length: totalSteps }, (_, i) => i + 1);
   return (
-    <div className="mb-4">
-      {/* Progress dots with labels */}
-      <div className="flex justify-center items-center gap-2">
-        {Array.from({ length: totalSteps }, (_, i) => i + 1).map((step) => (
-          <div key={step} className="flex items-center">
-            <div className="flex flex-col items-center">
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-bold transition-colors ${
-                  step < currentStep
-                    ? "bg-green-600 text-white"
-                    : step === currentStep
-                      ? "bg-amber-500 text-gray-900"
-                      : "bg-surface2 text-muted"
+    <ol className="flex items-center gap-2" aria-label={`Step ${currentStep} of ${totalSteps}`}>
+      {steps.map((step) => {
+        const done = step < currentStep;
+        const active = step === currentStep;
+        return (
+          <Fragment key={step}>
+            <li className="flex items-center gap-2" aria-current={active ? "step" : undefined}>
+              <span
+                className={`flex h-5 w-5 items-center justify-center rounded-full border text-xs font-semibold tabular-nums ${
+                  active
+                    ? "border-transparent bg-accent text-accent-fg"
+                    : done
+                    ? "border-line-strong bg-surface3 text-ink"
+                    : "border-line-strong text-muted"
                 }`}
               >
-                {step < currentStep ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  step
-                )}
-              </div>
+                {done ? <CheckIcon size={12} strokeWidth={2.5} /> : step}
+              </span>
               {stepLabels[step - 1] && (
-                <span
-                  className={`text-sm mt-1 font-medium ${
-                    step === currentStep ? "text-accent-text" : "text-muted"
-                  }`}
-                >
+                <span className={`hidden text-sm sm:inline ${active ? "font-medium text-ink" : "text-muted"}`}>
                   {stepLabels[step - 1]}
                 </span>
               )}
-            </div>
-            {step < totalSteps && (
-              <div
-                className={`w-10 h-1 mx-1 rounded-full mb-6 ${
-                  step < currentStep ? "bg-green-500" : "bg-surface2"
-                }`}
-              />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
+            </li>
+            {step < totalSteps && <span aria-hidden="true" className="h-px w-4 bg-line-strong" />}
+          </Fragment>
+        );
+      })}
+    </ol>
   );
 }

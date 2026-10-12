@@ -13,7 +13,8 @@ import { OperationalView } from "./components/main/OperationalView";
 import { SettingsSheet } from "./components/main/SettingsSheet";
 import { HelpModal } from "./components/main/HelpModal";
 import { TroubleshootingModal } from "./components/main/TroubleshootingModal";
-import { BigButton } from "./components/shared/BigButton";
+import { Button } from "./components/shared/Button";
+import { findVirtualOutput } from "./components/audio/audioHelpers";
 import { ToastStack, ToastItem, ToastKind } from "./components/shared/Toast";
 import { useTheme } from "./hooks/useTheme";
 
@@ -167,6 +168,9 @@ function App() {
   // Ref to track current settings synchronously (React state is async)
   const settingsRef = useRef<Settings>(settings);
   const midiConnectedRef = useRef(false);
+  // Last virtual output the app routed to. Stops the forced-output effect and
+  // the device poll from restarting audio twice for the same device.
+  const lastForcedOutputRef = useRef<string | null>(null);
 
   // Toast helpers. Keyed toasts replace an earlier toast with the same id.
   const dismissToast = useCallback((id: string) => {
@@ -187,7 +191,7 @@ function App() {
   // without breaking the fixed-height layout. Clamped to a sane range.
   useEffect(() => {
     const scale = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
-    document.documentElement.style.fontSize = `${16 * scale}px`;
+    document.documentElement.style.fontSize = `${14 * scale}px`;
   }, [settings.ui_scale]);
 
 
@@ -289,38 +293,17 @@ function App() {
         setSelectedInputDevice(null);
       }
 
-      // On macOS, auto-detect BlackHole and set it as the output device
-      // (similar to how Linux auto-detects VailZoomer)
-      if (detectedOS === "macos") {
-        const blackHoleDevice = outputDeviceList.find(d =>
-          d.internal_name.toLowerCase().includes("blackhole") ||
-          d.display_name.toLowerCase().includes("blackhole")
-        );
-        if (blackHoleDevice && savedSettings.output_device !== blackHoleDevice.internal_name) {
-          console.log("[audio] Auto-selecting BlackHole as output device:", blackHoleDevice.display_name);
-          savedSettings.output_device = blackHoleDevice.internal_name;
-          setSelectedOutputDevice(blackHoleDevice.internal_name);
-          updateSettings({ output_device: blackHoleDevice.internal_name });
+      // The output is forced to the platform's virtual cable (VB-Cable,
+      // BlackHole or VailZoomer). There is no user-facing output picker.
+      const virtualDevice = findVirtualOutput(outputDeviceList, detectedOS);
+      if (virtualDevice) {
+        lastForcedOutputRef.current = virtualDevice.internal_name;
+        if (savedSettings.output_device !== virtualDevice.internal_name) {
+          console.log("[audio] Forcing virtual output:", virtualDevice.display_name);
+          savedSettings.output_device = virtualDevice.internal_name;
+          updateSettings({ output_device: virtualDevice.internal_name });
         }
-      }
-
-      // On Windows, auto-detect VB-Audio Cable. Without this, a fresh install
-      // has no UI path to select it during the wizard and the user ends up
-      // routing morse to their speakers instead of to Zoom.
-      if (detectedOS === "windows") {
-        const cableDevice = outputDeviceList.find(d => {
-          const i = d.internal_name.toLowerCase();
-          const n = d.display_name.toLowerCase();
-          return i.includes("cable input") || n.includes("cable input")
-            || (i.includes("cable") && i.includes("vb-audio"))
-            || (n.includes("cable") && n.includes("vb-audio"));
-        });
-        if (cableDevice && savedSettings.output_device !== cableDevice.internal_name) {
-          console.log("[audio] Auto-selecting VB-Cable as output device:", cableDevice.display_name);
-          savedSettings.output_device = cableDevice.internal_name;
-          setSelectedOutputDevice(cableDevice.internal_name);
-          updateSettings({ output_device: cableDevice.internal_name });
-        }
+        setSelectedOutputDevice(virtualDevice.internal_name);
       }
 
       // On Linux, check if VailZoomer exists - if not, mute mic to prevent echo
@@ -454,7 +437,7 @@ function App() {
           setAudioStarted(true);
           dismissToast("audio-status");
         } else if (state === "restarting") {
-          pushToast("audio-status", "warning", message || "Audio device lost, restarting…");
+          pushToast("audio-status", "warning", message || "Audio device lost, restarting");
         } else if (state === "error") {
           pushToast("audio-status", "error", message || "Audio error", true);
         } else if (state === "stopped") {
@@ -471,7 +454,7 @@ function App() {
         if (connected && !wasConnected) {
           pushToast("midi-status", "success", "Vail Adapter connected");
         } else if (!connected && wasConnected) {
-          pushToast("midi-status", "warning", "Vail Adapter disconnected — reconnecting");
+          pushToast("midi-status", "warning", "Vail Adapter disconnected, reconnecting");
         } else if (!connected && error) {
           pushToast("midi-status", "error", error, true);
         }
@@ -518,13 +501,16 @@ function App() {
         setInputDevices(newInputDevices);
         setOutputDevices(newOutputDevices);
 
-        // If devices changed and audio is running, restart audio to pick up new default device
+        // If devices changed and audio is running, restart audio to pick up new default device.
+        // The output is always the virtual cable when it is present.
+        const forced = findVirtualOutput(newOutputDevices, currentOS);
         if ((inputChanged || outputChanged) && audioStarted) {
           console.log("[audio] Device list changed, restarting audio...");
           try {
+            if (forced) lastForcedOutputRef.current = forced.internal_name;
             await invoke("stop_audio");
             await invoke("start_audio_with_all_devices", {
-              outputDevice: selectedOutputDevice,
+              outputDevice: forced ? forced.internal_name : selectedOutputDevice,
               inputDevice: selectedInputDevice,
               localDevice: selectedLocalDevice,
             });
@@ -538,7 +524,24 @@ function App() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [audioStarted, selectedOutputDevice, selectedInputDevice, selectedLocalDevice]);
+  }, [audioStarted, selectedOutputDevice, selectedInputDevice, selectedLocalDevice, currentOS]);
+
+  // Force the virtual cable as the output whenever the device list updates
+  // (install finished, driver appeared, saved device went stale).
+  useEffect(() => {
+    const forced = findVirtualOutput(outputDevices, currentOS);
+    if (!forced) return;
+    const name = forced.internal_name;
+    if (selectedOutputDevice !== name) {
+      setSelectedOutputDevice(name);
+      updateSettings({ output_device: name });
+    }
+    if (lastForcedOutputRef.current !== name) {
+      lastForcedOutputRef.current = name;
+      if (audioStarted) void restartAudio(name, selectedInputDevice);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outputDevices, currentOS]);
 
   // Manual adapter pick from Settings. Connection state comes back via midi:status.
   const connectMidi = async (deviceName: string) => {
@@ -586,8 +589,8 @@ function App() {
         await win.setMinSize(new LogicalSize(360, 200));
         await win.setSize(new LogicalSize(420, 260));
       } else {
-        const prev = savedWindowSizeRef.current ?? { w: 800, h: 700 };
-        await win.setMinSize(new LogicalSize(650, 550));
+        const prev = savedWindowSizeRef.current ?? { w: 760, h: 720 };
+        await win.setMinSize(new LogicalSize(640, 560));
         await win.setSize(new LogicalSize(prev.w, prev.h));
         await win.setAlwaysOnTop(false);
       }
@@ -761,32 +764,20 @@ function App() {
     }
   };
 
-  // Update banner component
-  const UpdateBanner = () => {
-    if (!updateAvailable) return null;
-    return (
-      <div className="fixed top-0 left-0 right-0 p-3 bg-surface border-b border-line shadow-lg z-50">
-        <div className="flex items-center justify-center gap-4">
-          <span className="text-ink text-lg">
-            Update Available: v{updateAvailable.version} — download from GitHub
-          </span>
-          <BigButton
-            variant="success"
-            onClick={handleOpenReleases}
-            className="!min-h-0 !py-2 !px-4 !text-base"
-          >
-            Open Releases Page
-          </BigButton>
-          <button
-            onClick={() => setUpdateAvailable(null)}
-            className="min-h-[40px] px-2 text-muted hover:text-ink"
-          >
-            Later
-          </button>
-        </div>
-      </div>
-    );
-  };
+  // Update banner: slim in-flow bar above whichever screen is showing.
+  const updateBanner = updateAvailable ? (
+    <div className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-surface px-4" role="status">
+      <span className="min-w-0 flex-1 truncate text-base">
+        Update available: v{updateAvailable.version}
+      </span>
+      <Button variant="primary" onClick={handleOpenReleases}>
+        Open releases page
+      </Button>
+      <Button variant="ghost" onClick={() => setUpdateAvailable(null)}>
+        Later
+      </Button>
+    </div>
+  ) : null;
 
   // Re-query backend device lists. Used whenever a device picker opens and
   // on window focus, so freshly connected Bluetooth/USB hardware shows up
@@ -845,7 +836,7 @@ function App() {
       );
 
       if (vailZoomerDevice) {
-        setLinuxSetupLog(prev => [...prev, `✓ Found VailZoomer device: ${vailZoomerDevice.display_name}`]);
+        setLinuxSetupLog(prev => [...prev, `OK: Found VailZoomer device: ${vailZoomerDevice.display_name}`]);
         setSelectedOutputDevice(vailZoomerDevice.internal_name);
 
         // Unmute mic now that VailZoomer is set up (prevents feedback echo)
@@ -867,7 +858,7 @@ function App() {
             inputDevice: selectedInputDevice,
             localDevice: selectedLocalDevice,
           });
-          setLinuxSetupLog(prev => [...prev, "✓ Audio routing active"]);
+          setLinuxSetupLog(prev => [...prev, "OK: Audio routing active"]);
         } catch (err) {
           console.error("Failed to restart audio after setup:", err);
           setLinuxSetupLog(prev => [...prev, `Warning: Audio restart failed: ${err}`]);
@@ -882,7 +873,7 @@ function App() {
     } catch (err) {
       const errorMsg = String(err);
       setLinuxSetupError(errorMsg);
-      setLinuxSetupLog(prev => [...prev, `✗ Error: ${errorMsg}`]);
+      setLinuxSetupLog(prev => [...prev, `Error: ${errorMsg}`]);
     } finally {
       // After every setup attempt (success or failure), refresh the list of
       // missing prerequisites so the UI can offer a one-click "Install" path
@@ -913,7 +904,7 @@ function App() {
         if (!result.used_graphical_auth) {
           setLinuxSetupLog(prev => [
             ...prev,
-            "No graphical sudo available — run the manual command above in a terminal.",
+            "No graphical sudo available. Run the manual command in a terminal.",
           ]);
         }
         return;
@@ -931,7 +922,7 @@ function App() {
     } catch (err) {
       const msg = String(err);
       setLinuxSetupError(msg);
-      setLinuxSetupLog(prev => [...prev, `✗ Install error: ${msg}`]);
+      setLinuxSetupLog(prev => [...prev, `Error: install failed: ${msg}`]);
     } finally {
       setLinuxInstallInProgress(false);
     }
@@ -941,7 +932,7 @@ function App() {
   if (appMode === "wizard") {
     return (
       <>
-        <UpdateBanner />
+        {updateBanner}
         {wizardStep === 1 && (
           <Step1KeyerSetup
             midiDevices={midiDevices}
@@ -979,14 +970,12 @@ function App() {
             inputDevices={inputDevices}
             outputDevices={outputDevices}
             selectedInputDevice={selectedInputDevice}
-            selectedOutputDevice={selectedOutputDevice}
             selectedLocalDevice={selectedLocalDevice}
             sidetoneRoute={settings.sidetone_route}
             micLevel={micLevel}
             micVolume={settings.mic_volume}
             currentOS={currentOS}
             onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
-            onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}
             onLocalDeviceChange={(device) => {
               setSelectedLocalDevice(device);
               updateSettings({ local_output_device: device });
@@ -1045,11 +1034,12 @@ function App() {
   if (appMode === "video-tips") {
     return (
       <>
-        <UpdateBanner />
+        {updateBanner}
         <Step4VideoAppTips
           onBack={() => setAppMode("main")}
           onComplete={() => setAppMode("main")}
           currentOS={currentOS}
+          standalone
         />
       </>
     );
@@ -1063,10 +1053,18 @@ function App() {
     setAppMode("wizard");
   };
 
+  // Open the install flow for the virtual cable (wizard step 2) from the main
+  // screen or Settings. Does not clear the wizard-complete flag.
+  const openOutputSetup = () => {
+    setShowSettings(false);
+    setWizardStep(2);
+    setAppMode("wizard");
+  };
+
   // Main operational view
   return (
     <>
-      <UpdateBanner />
+      {updateBanner}
       <OperationalView
         midiConnected={midiConnected}
         audioStarted={audioStarted}
@@ -1084,6 +1082,8 @@ function App() {
         sidetoneRoute={settings.sidetone_route}
         selectedLocalDevice={selectedLocalDevice}
         outputDevices={outputDevices}
+        currentOS={currentOS}
+        onSetupOutput={openOutputSetup}
         keyerType={settings.keyer_type}
         wpm={settings.wpm}
         sidetoneFrequency={settings.sidetone_frequency}
@@ -1117,7 +1117,6 @@ function App() {
           inputDevices={inputDevices}
           outputDevices={outputDevices}
           selectedInputDevice={selectedInputDevice}
-          selectedOutputDevice={selectedOutputDevice}
           selectedLocalDevice={selectedLocalDevice}
           micLevel={micLevel}
           currentOS={currentOS}
@@ -1132,7 +1131,6 @@ function App() {
           onUiScaleChange={(scale) => updateSettings({ ui_scale: scale })}
           onSelectMidiDevice={connectMidi}
           onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
-          onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}
           onLocalDeviceChange={(device) => {
             setSelectedLocalDevice(device);
             updateSettings({ local_output_device: device });
@@ -1179,6 +1177,7 @@ function App() {
             updateSettings({ buffer_size_mode: mode });
             invoke("set_buffer_size_mode", { mode }).catch(() => {});
           }}
+          onSetupOutput={openOutputSetup}
           onRerunSetup={rerunWizard}
           onClose={() => setShowSettings(false)}
         />

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { BigSelect } from "../shared/BigSelect";
+import { Select } from "../shared/Select";
 import { DeviceInfo, isVirtualOutput } from "./audioHelpers";
 
 interface LocalOutputPickerProps {
@@ -15,16 +15,15 @@ export function LocalOutputPicker({
   selectedLocalDevice,
   onLocalDeviceChange,
   onRefreshDevices,
-  label = "Your speakers / headphones",
+  label = "Speakers or headphones",
 }: LocalOutputPickerProps) {
   const candidates = outputDevices.filter((d) => !isVirtualOutput(d));
   const selectedIsAvailable =
     !!selectedLocalDevice && candidates.some((d) => d.internal_name === selectedLocalDevice);
 
-  // Force a real device pick — never fall through to the OS default, which is
-  // a common source of confusion when the user's OS default is wrong. If
-  // nothing's chosen yet or the saved device disappeared, pick the first
-  // available real device automatically.
+  // Force a real device pick, never the OS default (a common source of
+  // confusion). If nothing is chosen yet or the saved device disappeared,
+  // pick the first available real device.
   useEffect(() => {
     if (candidates.length === 0) return;
     if (!selectedLocalDevice || !selectedIsAvailable) {
@@ -33,22 +32,20 @@ export function LocalOutputPicker({
   }, [candidates, selectedLocalDevice, selectedIsAvailable, onLocalDeviceChange]);
 
   return (
-    <div className="space-y-1">
-      <label className="block text-lg text-ink font-medium">{label}</label>
-      <BigSelect
+    <div className="space-y-1.5">
+      <label htmlFor="local-output-select" className="block text-base text-ink">
+        {label}
+      </label>
+      <Select
+        id="local-output-select"
         value={selectedIsAvailable ? selectedLocalDevice! : ""}
         onChange={(v) => onLocalDeviceChange(v || null)}
         onOpen={onRefreshDevices}
-        options={candidates.map((d) => ({
-          value: d.internal_name,
-          label: d.display_name,
-        }))}
+        options={candidates.map((d) => ({ value: d.internal_name, label: d.display_name }))}
         hidePlaceholder
       />
       {candidates.length === 0 && (
-        <p className="text-sm text-accent-text">
-          No speakers or headphones detected — plug something in.
-        </p>
+        <p className="text-sm text-warn-fg">No speakers or headphones detected. Plug something in.</p>
       )}
     </div>
   );

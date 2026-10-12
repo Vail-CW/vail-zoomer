@@ -6,7 +6,7 @@ interface KeyingTraceProps {
 
 const WINDOW_MS = 4000;
 const IDLE_STOP_MS = 5000;
-const HEIGHT = 56;
+const HEIGHT = 40;
 
 interface Segment {
   start: number;
@@ -46,11 +46,11 @@ export function KeyingTrace({ isKeyDown }: KeyingTraceProps) {
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const cs = getComputedStyle(document.documentElement);
-    ctx.fillStyle = `rgb(${cs.getPropertyValue("--surface-2").trim() || "55 65 81"})`;
+    ctx.fillStyle = `rgb(${cs.getPropertyValue("--surface-2").trim() || "32 32 35"})`;
     ctx.fillRect(0, 0, w, HEIGHT);
     ctx.fillStyle = `rgb(${cs.getPropertyValue("--accent").trim() || "245 158 11"})`;
     if (reducedRef.current) {
-      if (keyRef.current) ctx.fillRect(0, 12, w, HEIGHT - 24);
+      if (keyRef.current) ctx.fillRect(0, 10, w, HEIGHT - 20);
       return;
     }
     const segs = segsRef.current;
@@ -60,7 +60,7 @@ export function KeyingTrace({ isKeyDown }: KeyingTraceProps) {
       const x0 = w - ((now - s.start) / WINDOW_MS) * w;
       if (x1 < 0) continue;
       const left = Math.max(0, x0);
-      ctx.fillRect(left, 12, Math.max(2, x1 - left), HEIGHT - 24);
+      ctx.fillRect(left, 10, Math.max(2, x1 - left), HEIGHT - 20);
     }
     while (segs.length && segs[0].end !== null && now - (segs[0].end as number) > WINDOW_MS) segs.shift();
   };
@@ -133,7 +133,7 @@ export function KeyingTrace({ isKeyDown }: KeyingTraceProps) {
   }, []);
 
   return (
-    <div ref={wrapRef} className="w-full rounded-lg overflow-hidden" style={{ height: HEIGHT }}>
+    <div ref={wrapRef} className="w-full overflow-hidden rounded border border-line" style={{ height: HEIGHT }}>
       <canvas
         ref={canvasRef}
         role="img"

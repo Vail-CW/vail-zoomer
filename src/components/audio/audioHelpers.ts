@@ -67,7 +67,7 @@ export const isVirtualInput = (d: DeviceInfo): boolean => {
 export const isRecommendedVirtualOutput = (d: DeviceInfo, os: OSType): boolean => {
   const i = d.internal_name.toLowerCase();
   const n = d.display_name.toLowerCase();
-  if (os === "linux") return i === "vailzoomer" || n.includes("vailzoomer");
+  if (os === "linux") return i === "vailzoomer" || n.includes("vailzoomer") || n.includes("vail zoomer");
   if (os === "macos") return i.includes("blackhole") || n.includes("blackhole");
   return (
     i.includes("cable") ||
@@ -77,59 +77,12 @@ export const isRecommendedVirtualOutput = (d: DeviceInfo, os: OSType): boolean =
   );
 };
 
-export type VirtualOutputStatusKind = "ok" | "warn" | "missing" | "none";
+/** Display name of the virtual cable driver for this platform. */
+export const virtualDriverName = (os: OSType): string =>
+  os === "macos" ? "BlackHole" : os === "linux" ? "VailZoomer" : "VB-Cable";
 
-export interface VirtualOutputStatus {
-  kind: VirtualOutputStatusKind;
-  driverName: string;
-  /** True if the OS reports the driver installed at all. */
-  installed: boolean;
-  /** True if the driver is currently selected as the output. */
-  selected: boolean;
-  text: string;
-}
-
-/**
- * Single source of truth for "is the platform virtual cable installed and
- * selected?". Used by both the wizard's audio step (renders a status row)
- * and the settings sheet (annotates the output picker).
- */
-export const getVirtualOutputStatus = (
-  outputDevices: DeviceInfo[],
-  selectedOutput: string | null,
+/** The platform's virtual output device, or null when the driver is missing. */
+export const findVirtualOutput = (
+  devices: DeviceInfo[],
   os: OSType,
-): VirtualOutputStatus => {
-  if (os === "linux") {
-    return { kind: "none", driverName: "", installed: false, selected: false, text: "" };
-  }
-  const driverName = os === "macos" ? "BlackHole" : "VB-Cable";
-  const installed = outputDevices.some((d) => isRecommendedVirtualOutput(d, os));
-  const selected = !!selectedOutput && outputDevices.some(
-    (d) => d.internal_name === selectedOutput && isRecommendedVirtualOutput(d, os),
-  );
-  if (!installed) {
-    return {
-      kind: "missing",
-      driverName,
-      installed,
-      selected,
-      text: `${driverName} isn't installed — go back to Step 2.`,
-    };
-  }
-  if (!selected) {
-    return {
-      kind: "warn",
-      driverName,
-      installed,
-      selected,
-      text: `${driverName} found but not selected — restart the app.`,
-    };
-  }
-  return {
-    kind: "ok",
-    driverName,
-    installed,
-    selected,
-    text: `${driverName} is routing morse to Zoom.`,
-  };
-};
+): DeviceInfo | null => devices.find((d) => isRecommendedVirtualOutput(d, os)) ?? null;
