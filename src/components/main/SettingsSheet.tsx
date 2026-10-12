@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BigSelect } from "../shared/BigSelect";
 import { Card } from "../shared/Card";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -75,6 +75,14 @@ interface SettingsSheetProps {
   onMicVolumeChange: (vol: number) => void;
   onMicDuckingChange: (enabled: boolean) => void;
   onRefreshDevices: () => void;
+  onRefreshMidiDevices: () => void;
+  onPreviewTone: (hz: number) => void;
+  theme: "dark" | "light" | "system";
+  sidetoneRiseMs: number;
+  bufferSizeMode: "Auto" | "Low" | "Safe";
+  onThemeChange: (theme: "dark" | "light" | "system") => void;
+  onSidetoneRiseMsChange: (ms: number) => void;
+  onBufferSizeModeChange: (mode: "Auto" | "Low" | "Safe") => void;
   onRerunSetup: () => void;
   onClose: () => void;
 }
@@ -109,12 +117,60 @@ export function SettingsSheet({
   onMicVolumeChange,
   onMicDuckingChange,
   onRefreshDevices,
+  onRefreshMidiDevices,
+  onPreviewTone,
+  theme,
+  sidetoneRiseMs,
+  bufferSizeMode,
+  onThemeChange,
+  onSidetoneRiseMsChange,
+  onBufferSizeModeChange,
   onRerunSetup,
   onClose,
 }: SettingsSheetProps) {
   const [confirmReset, setConfirmReset] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   useModalA11y(panelRef, onClose);
+
+  // Refresh the MIDI picker whenever the sheet opens.
+  useEffect(() => {
+    onRefreshMidiDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced audible preview while dragging speed / pitch sliders.
+  const previewTimer = useRef<number | null>(null);
+  const schedulePreview = (hz: number) => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => onPreviewTone(hz), 250);
+  };
+  useEffect(() => () => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+  }, []);
+
+  const segmented = <T extends string>(
+    options: { value: T; label: string }[],
+    value: T,
+    onChange: (v: T) => void,
+    label: string
+  ) => (
+    <div className="flex gap-2" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          aria-pressed={value === o.value}
+          className={`flex-1 min-h-[48px] px-3 rounded-xl border-2 text-lg font-medium transition-colors ${
+            value === o.value
+              ? "bg-amber-500/15 border-amber-400 text-ink"
+              : "bg-surface2 border-line text-ink hover:border-muted"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
 
   // Filter to Vail-family devices first, then everything else (excluding our
   // own virtual MIDI loopback that some OSes show).
@@ -144,8 +200,8 @@ export function SettingsSheet({
       onClick={() => onSelectMidiDevice(device)}
       className={`w-full p-3 text-left rounded-xl border-2 transition-colors min-h-[52px] ${
         selectedMidiDevice === device
-          ? "bg-amber-500/15 border-amber-400 text-white"
-          : "bg-gray-800 border-gray-600 text-gray-200 hover:border-gray-500"
+          ? "bg-amber-500/15 border-amber-400 text-ink"
+          : "bg-surface2 border-line text-ink hover:border-muted"
       }`}
       aria-pressed={selectedMidiDevice === device}
     >
@@ -154,11 +210,11 @@ export function SettingsSheet({
           className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
             selectedMidiDevice === device
               ? "border-amber-400 bg-amber-500"
-              : "border-gray-500"
+              : "border-line"
           }`}
         >
           {selectedMidiDevice === device && (
-            <div className="w-2 h-2 rounded-full bg-gray-900" />
+            <div className="w-2 h-2 rounded-full bg-app" />
           )}
         </div>
         <span className="text-base">{friendlyDeviceLabel(device)}</span>
@@ -176,17 +232,17 @@ export function SettingsSheet({
     >
       <div
         ref={panelRef}
-        className="bg-gray-900 w-full max-w-2xl h-full overflow-y-auto shadow-2xl"
+        className="bg-app w-full max-w-2xl h-full overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky header */}
-        <div className="sticky top-0 bg-gray-900 border-b border-gray-700 px-5 py-4 flex items-center justify-between z-10">
-          <h2 id="settings-sheet-title" className="text-2xl font-bold text-amber-400">
+        <div className="sticky top-0 bg-app border-b border-line px-5 py-4 flex items-center justify-between z-10">
+          <h2 id="settings-sheet-title" className="text-2xl font-bold text-accent-text">
             Settings
           </h2>
           <button
             onClick={onClose}
-            className="min-w-[48px] min-h-[48px] px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-lg font-medium"
+            className="min-w-[48px] min-h-[48px] px-3 rounded-lg bg-surface2 hover:bg-line text-ink text-lg font-medium"
             aria-label="Close settings"
           >
             Done
@@ -196,24 +252,24 @@ export function SettingsSheet({
         <div className="p-5 space-y-5">
           {/* Devices */}
           <Card>
-            <h3 className="text-xl font-bold text-amber-400 mb-3">Devices</h3>
+            <h3 className="text-xl font-bold text-accent-text mb-3">Devices</h3>
 
             {/* MIDI keyer */}
             <div className="space-y-2 mb-5">
               <div className="flex items-center justify-between">
-                <label className="block text-lg text-gray-200 font-medium">
+                <label className="block text-lg text-ink font-medium">
                   Vail Adapter (keyer)
                 </label>
                 <span
                   className={`text-sm font-medium ${
-                    midiConnected ? "text-green-400" : "text-amber-300"
+                    midiConnected ? "text-green-400" : "text-accent-text"
                   }`}
                 >
                   {midiConnected ? "Connected" : "Not connected"}
                 </span>
               </div>
               {midiDevices.length === 0 ? (
-                <p className="text-base text-gray-300">
+                <p className="text-base text-muted">
                   No MIDI devices found. Plug your Vail Adapter in over USB and it will
                   appear here automatically.
                 </p>
@@ -223,7 +279,7 @@ export function SettingsSheet({
                   {otherMidiDevices.length > 0 && (
                     <>
                       {vailMidiDevices.length > 0 && (
-                        <p className="text-sm text-gray-400 pt-1">Other MIDI devices</p>
+                        <p className="text-sm text-muted pt-1">Other MIDI devices</p>
                       )}
                       {otherMidiDevices.map(renderMidiButton)}
                     </>
@@ -248,7 +304,7 @@ export function SettingsSheet({
 
             {/* Output to video app */}
             <div className="space-y-2 mb-5">
-              <label className="block text-lg text-gray-200 font-medium">
+              <label className="block text-lg text-ink font-medium">
                 Output to your video app
               </label>
               <BigSelect
@@ -260,7 +316,7 @@ export function SettingsSheet({
               />
               <VirtualOutputStatusLine status={virtualOutputStatus} />
               {currentOS === "linux" && (
-                <p className="text-sm text-gray-300">
+                <p className="text-sm text-muted">
                   On Linux this is set up automatically. Pick <strong>VailZoomer</strong> if
                   you need to switch back to it.
                 </p>
@@ -289,10 +345,10 @@ export function SettingsSheet({
 
           {/* Keyer settings */}
           <Card>
-            <h3 className="text-xl font-bold text-amber-400 mb-3">Keyer</h3>
+            <h3 className="text-xl font-bold text-accent-text mb-3">Keyer</h3>
 
             <div className="space-y-2 mb-5">
-              <label className="block text-lg text-gray-200 font-medium">Key type</label>
+              <label className="block text-lg text-ink font-medium">Key type</label>
               <BigSelect
                 value={keyerType}
                 onChange={onKeyerTypeChange}
@@ -303,16 +359,19 @@ export function SettingsSheet({
 
             {keyerType !== "Straight" && (
               <div className="mb-5">
-                <label className="flex justify-between items-center text-lg text-gray-200 font-medium mb-2">
+                <label className="flex justify-between items-center text-lg text-ink font-medium mb-2">
                   <span>Speed</span>
-                  <span className="text-amber-400 font-bold">{wpm} WPM</span>
+                  <span className="text-accent-text font-bold">{wpm} WPM</span>
                 </label>
                 <input
                   type="range"
                   min="5"
                   max="50"
                   value={wpm}
-                  onChange={(e) => onWpmChange(parseInt(e.target.value))}
+                  onChange={(e) => {
+                    onWpmChange(parseInt(e.target.value));
+                    schedulePreview(sidetoneFrequency);
+                  }}
                   className="w-full"
                   aria-label="Words per minute"
                 />
@@ -320,9 +379,9 @@ export function SettingsSheet({
             )}
 
             <div className="mb-5">
-              <label className="flex justify-between items-center text-lg text-gray-200 font-medium mb-2">
+              <label className="flex justify-between items-center text-lg text-ink font-medium mb-2">
                 <span>Tone pitch</span>
-                <span className="text-amber-400 font-bold">{sidetoneFrequency} Hz</span>
+                <span className="text-accent-text font-bold">{sidetoneFrequency} Hz</span>
               </label>
               <input
                 type="range"
@@ -330,16 +389,42 @@ export function SettingsSheet({
                 max="1000"
                 step="10"
                 value={sidetoneFrequency}
-                onChange={(e) => onSidetoneFrequencyChange(parseInt(e.target.value))}
+                onChange={(e) => {
+                  const hz = parseInt(e.target.value);
+                  onSidetoneFrequencyChange(hz);
+                  schedulePreview(hz);
+                }}
                 className="w-full"
                 aria-label="Tone pitch"
               />
             </div>
 
             <div className="mb-5">
-              <label className="flex justify-between items-center text-lg text-gray-200 font-medium mb-2">
+              <label className="flex justify-between items-center text-lg text-ink font-medium mb-2">
+                <span>Tone edge softness</span>
+                <span className="text-accent-text font-bold">{sidetoneRiseMs} ms</span>
+              </label>
+              <input
+                type="range"
+                min="1"
+                max="20"
+                value={sidetoneRiseMs}
+                onChange={(e) => {
+                  onSidetoneRiseMsChange(parseInt(e.target.value));
+                  schedulePreview(sidetoneFrequency);
+                }}
+                className="w-full"
+                aria-label="Tone edge softness in milliseconds"
+              />
+              <p className="text-sm text-muted mt-1">
+                Higher = softer start and stop of each beep (fewer clicks). Lower = crisper.
+              </p>
+            </div>
+
+            <div className="mb-5">
+              <label className="flex justify-between items-center text-lg text-ink font-medium mb-2">
                 <span>Tone volume</span>
-                <span className="text-amber-400 font-bold">
+                <span className="text-accent-text font-bold">
                   {Math.round(sidetoneVolume * 100)}%
                 </span>
               </label>
@@ -352,24 +437,24 @@ export function SettingsSheet({
                 className="w-full"
                 aria-label="Tone volume"
               />
-              <p className="text-sm text-gray-300 mt-1">
+              <p className="text-sm text-muted mt-1">
                 Wear headphones — prevents your sidetone bouncing back through your mic.
               </p>
             </div>
 
             <div className="flex items-center justify-between">
               <div className="flex-1 pr-3">
-                <span className="text-lg text-gray-200 font-medium">
+                <span className="text-lg text-ink font-medium">
                   Auto-mute mic while sending
                 </span>
-                <p className="text-sm text-gray-300">
+                <p className="text-sm text-muted">
                   Mutes your microphone the instant you key down and unmutes it the moment you stop — prevents your sidetone bouncing back as feedback.
                 </p>
               </div>
               <button
                 onClick={() => onMicDuckingChange(!micDucking)}
                 className={`relative w-16 h-9 rounded-full transition-colors flex-shrink-0 ${
-                  micDucking ? "bg-amber-500" : "bg-gray-600"
+                  micDucking ? "bg-amber-500" : "bg-line"
                 }`}
                 aria-label="Mute my voice while keying"
                 aria-pressed={micDucking}
@@ -383,12 +468,43 @@ export function SettingsSheet({
             </div>
           </Card>
 
+          {/* Appearance & audio engine */}
+          <Card>
+            <h3 className="text-xl font-bold text-accent-text mb-3">Appearance</h3>
+            {segmented(
+              [
+                { value: "dark" as const, label: "Dark" },
+                { value: "light" as const, label: "Light" },
+                { value: "system" as const, label: "System" },
+              ],
+              theme,
+              onThemeChange,
+              "Theme"
+            )}
+
+            <h3 className="text-xl font-bold text-accent-text mt-6 mb-3">Audio latency</h3>
+            {segmented(
+              [
+                { value: "Auto" as const, label: "Auto" },
+                { value: "Low" as const, label: "Low" },
+                { value: "Safe" as const, label: "Safe" },
+              ],
+              bufferSizeMode,
+              onBufferSizeModeChange,
+              "Audio latency"
+            )}
+            <p className="text-sm text-muted mt-2">
+              Low = less delay, may crackle on slow machines; Safe = never crackles, more
+              delay. Takes effect next time audio starts.
+            </p>
+          </Card>
+
           {/* Re-run setup */}
-          <Card className="!bg-gray-800/50">
+          <Card className="!bg-surface2/50">
             <div className="flex items-center justify-between gap-3">
               <div className="flex-1">
-                <p className="text-lg text-gray-200 font-medium">Re-run first-time setup</p>
-                <p className="text-sm text-gray-300">
+                <p className="text-lg text-ink font-medium">Re-run first-time setup</p>
+                <p className="text-sm text-muted">
                   Walks you through the four-step setup wizard again from scratch.
                 </p>
               </div>
@@ -405,7 +521,7 @@ export function SettingsSheet({
                   </button>
                   <button
                     onClick={() => setConfirmReset(false)}
-                    className="min-h-[44px] px-4 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg"
+                    className="min-h-[44px] px-4 bg-surface2 hover:bg-line text-ink rounded-lg"
                   >
                     Cancel
                   </button>
@@ -413,7 +529,7 @@ export function SettingsSheet({
               ) : (
                 <button
                   onClick={() => setConfirmReset(true)}
-                  className="min-h-[44px] px-4 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg"
+                  className="min-h-[44px] px-4 bg-surface2 hover:bg-line text-ink rounded-lg"
                 >
                   Re-run setup
                 </button>

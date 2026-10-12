@@ -16,10 +16,10 @@ export function CollapsibleSection({
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className={`rounded-xl bg-gray-800/50 ${className}`}>
+    <div className={`rounded-xl bg-surface/50 ${className}`}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-4 text-lg font-medium text-gray-300 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 rounded-xl"
+        className="w-full flex items-center justify-between p-4 text-lg font-medium text-muted hover:text-ink transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500 rounded-xl"
       >
         <span>{title}</span>
         <svg

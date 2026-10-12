@@ -34,12 +34,12 @@ export function MicSection({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="block text-lg text-gray-200 font-medium">{label}</label>
+        <label className="block text-lg text-ink font-medium">{label}</label>
         {onRefreshDevices && (
           <button
             onClick={onRefreshDevices}
             title="Re-scan connected microphones"
-            className="min-h-[44px] text-base text-gray-300 hover:text-amber-300 flex items-center gap-1 px-3 py-1 rounded hover:bg-gray-800"
+            className="min-h-[44px] text-base text-muted hover:text-accent-text flex items-center gap-1 px-3 py-1 rounded hover:bg-surface2"
           >
             ↻ Refresh
           </button>
@@ -58,14 +58,14 @@ export function MicSection({
       {onOpenDiagnostics && (
         <button
           onClick={onOpenDiagnostics}
-          className="min-h-[44px] text-base text-gray-300 hover:text-amber-300 underline"
+          className="min-h-[44px] text-base text-muted hover:text-accent-text underline"
         >
           Don't see your microphone?
         </button>
       )}
 
       {/* Level meter */}
-      <div className="h-4 bg-gray-800 rounded-full overflow-hidden">
+      <div className="h-4 bg-surface2 rounded-full overflow-hidden">
         <div
           className={`h-full transition-all duration-75 ${
             micLevel > 0.8 ? "bg-red-500" : micLevel > 0.5 ? "bg-yellow-500" : "bg-green-500"
@@ -76,9 +76,9 @@ export function MicSection({
 
       {/* Mic volume slider with mute label */}
       <div className="flex items-center gap-3 pt-1">
-        <span className="text-base text-gray-200 w-24">
+        <span className="text-base text-ink w-24">
           {micVolume === 0 ? (
-            <span className="text-amber-400 font-medium">Muted</span>
+            <span className="text-accent-text font-medium">Muted</span>
           ) : (
             `${Math.round(micVolume * 100)}%`
           )}
@@ -95,7 +95,7 @@ export function MicSection({
       </div>
 
       {micVolume === 0 && (
-        <p className="text-base text-amber-300">
+        <p className="text-base text-accent-text">
           Drag the slider to unmute and adjust your microphone volume.
         </p>
       )}

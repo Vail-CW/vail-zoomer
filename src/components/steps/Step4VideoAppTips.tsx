@@ -68,7 +68,7 @@ export function Step4VideoAppTips({
               className={`min-h-[48px] px-5 py-2 text-base font-medium rounded-xl transition-colors ${
                 selectedApp === app.id
                   ? "bg-amber-500 text-gray-900"
-                  : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                  : "bg-surface2 text-ink hover:bg-line"
               }`}
             >
               {app.label}
@@ -82,7 +82,7 @@ export function Step4VideoAppTips({
               <ol className="list-decimal list-inside space-y-1 text-base">
                 <li>
                   Settings → Audio → Microphone:{" "}
-                  <code className="bg-gray-800 px-1 rounded">{virtualDevice}</code>
+                  <code className="bg-surface2 px-1 rounded">{virtualDevice}</code>
                 </li>
                 <li>Turn <span className="text-red-400 font-medium">OFF</span> "Automatically adjust volume"</li>
                 <li>
@@ -108,7 +108,7 @@ export function Step4VideoAppTips({
           <InfoBox variant="warning" title="Teams settings">
             <ol className="list-decimal list-inside space-y-1 text-base">
               <li>Profile → Settings → Devices</li>
-              <li>Microphone: <code className="bg-gray-800 px-1 rounded">{virtualDevice}</code></li>
+              <li>Microphone: <code className="bg-surface2 px-1 rounded">{virtualDevice}</code></li>
               <li>Turn <span className="text-red-400 font-medium">OFF</span> noise suppression</li>
             </ol>
           </InfoBox>
@@ -118,7 +118,7 @@ export function Step4VideoAppTips({
           <InfoBox variant="warning" title="Discord settings">
             <ol className="list-decimal list-inside space-y-1 text-base">
               <li>User Settings → Voice &amp; Video</li>
-              <li>Input Device: <code className="bg-gray-800 px-1 rounded">{virtualDevice}</code></li>
+              <li>Input Device: <code className="bg-surface2 px-1 rounded">{virtualDevice}</code></li>
               <li>Turn <span className="text-red-400 font-medium">OFF</span> auto input sensitivity</li>
               <li>Turn <span className="text-red-400 font-medium">OFF</span> Echo Cancellation, Noise Suppression, Auto Gain</li>
             </ol>
@@ -129,18 +129,18 @@ export function Step4VideoAppTips({
           <InfoBox variant="warning" title="Google Meet settings">
             <ol className="list-decimal list-inside space-y-1 text-base">
               <li>In a meeting: ⋮ → Settings → Audio</li>
-              <li>Microphone: <code className="bg-gray-800 px-1 rounded">{virtualDevice}</code></li>
+              <li>Microphone: <code className="bg-surface2 px-1 rounded">{virtualDevice}</code></li>
             </ol>
           </InfoBox>
         )}
 
         {/* Virtual audio help */}
         <CollapsibleSection title="Need virtual audio help?">
-          <div className="text-base text-gray-200 space-y-2">
+          <div className="text-base text-ink space-y-2">
             {currentOS === "windows" && (
               <p>
                 Install <strong>VB-Cable</strong> from{" "}
-                <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline">
+                <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener noreferrer" className="text-accent-text underline">
                   vb-audio.com/Cable
                 </a>
                 {" "}and restart your computer.
@@ -149,7 +149,7 @@ export function Step4VideoAppTips({
             {currentOS === "macos" && (
               <p>
                 Install <strong>BlackHole</strong> from{" "}
-                <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline">
+                <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener noreferrer" className="text-accent-text underline">
                   existential.audio/blackhole
                 </a>
               </p>

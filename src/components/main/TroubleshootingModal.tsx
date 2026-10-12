@@ -29,7 +29,7 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
           </p>
           <ul className="list-disc list-inside space-y-1 ml-2 mt-2">
             <li>
-              <strong className="text-amber-300">Put on headphones.</strong> This solves it
+              <strong className="text-accent-text">Put on headphones.</strong> This solves it
               99% of the time. Mic can't catch tones it can't hear.
             </li>
             <li>
@@ -93,7 +93,7 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
       answer: (
         <>
           <p className="mb-2">
-            <strong className="text-amber-300">Wear headphones.</strong> If your speakers are
+            <strong className="text-accent-text">Wear headphones.</strong> If your speakers are
             playing the sidetone while your mic is listening, it loops.
           </p>
           <p>
@@ -169,16 +169,16 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
     >
       <div
         ref={panelRef}
-        className="bg-gray-800 rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-xl"
+        className="bg-surface2 rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-          <h2 id="troubleshooting-modal-title" className="text-2xl font-bold text-amber-400">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+          <h2 id="troubleshooting-modal-title" className="text-2xl font-bold text-accent-text">
             Troubleshooting
           </h2>
           <button
             onClick={onClose}
-            className="min-h-[44px] min-w-[44px] text-gray-300 hover:text-white text-3xl leading-none"
+            className="min-h-[44px] min-w-[44px] text-muted hover:text-ink text-3xl leading-none"
             aria-label="Close troubleshooting"
           >
             &times;
@@ -188,7 +188,7 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
         <div className="overflow-y-auto px-6 py-4 space-y-3">
           <InfoBox variant="info">
             <p>
-              <strong className="text-amber-300">Tip:</strong> Most audio weirdness goes away
+              <strong className="text-accent-text">Tip:</strong> Most audio weirdness goes away
               the moment you put on headphones. Your microphone can't pick up what your
               speakers aren't playing.
             </p>
@@ -199,18 +199,18 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
             return (
               <div
                 key={i}
-                className="border border-gray-700 rounded-xl overflow-hidden bg-gray-900/40"
+                className="border border-line rounded-xl overflow-hidden bg-app/40"
               >
                 <button
                   onClick={() => setOpen(isOpen ? null : i)}
-                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-700/30 transition-colors"
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-line transition-colors"
                   aria-expanded={isOpen}
                 >
-                  <span className="text-base font-medium text-gray-100">
+                  <span className="text-base font-medium text-ink">
                     {issue.question}
                   </span>
                   <svg
-                    className={`w-5 h-5 text-gray-400 shrink-0 transition-transform ${
+                    className={`w-5 h-5 text-muted shrink-0 transition-transform ${
                       isOpen ? "rotate-180" : ""
                     }`}
                     fill="none"
@@ -226,7 +226,7 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
                   </svg>
                 </button>
                 {isOpen && (
-                  <div className="px-4 pb-4 text-base text-gray-200 leading-relaxed">
+                  <div className="px-4 pb-4 text-base text-ink leading-relaxed">
                     {issue.answer}
                   </div>
                 )}
@@ -235,13 +235,13 @@ export function TroubleshootingModal({ onClose, onOpenSettings }: Troubleshootin
           })}
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-700 flex items-center justify-between gap-3 flex-wrap">
+        <div className="px-6 py-4 border-t border-line flex items-center justify-between gap-3 flex-wrap">
           <button
             onClick={() => {
               onClose();
               onOpenSettings();
             }}
-            className="min-h-[44px] px-4 bg-gray-700 hover:bg-gray-600 rounded-lg text-base text-gray-100"
+            className="min-h-[44px] px-4 bg-surface2 hover:bg-line rounded-lg text-base text-ink"
           >
             Open Settings
           </button>

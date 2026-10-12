@@ -7,7 +7,7 @@ interface CardProps {
 export function Card({ children, className = "", padded = true }: CardProps) {
   return (
     <div
-      className={`bg-gray-800 rounded-2xl ${padded ? "p-5" : ""} ${className}`}
+      className={`bg-surface rounded-2xl ${padded ? "p-5" : ""} ${className}`}
     >
       {children}
     </div>

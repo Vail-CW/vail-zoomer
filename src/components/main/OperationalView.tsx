@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AppIcon } from "../shared/AppIcon";
 import { Card } from "../shared/Card";
+import { LevelMeter } from "../shared/LevelMeter";
 import { friendlyMidiName } from "../audio/audioHelpers";
+import { DecoderPanel } from "./DecoderPanel";
+import { KeyingTrace } from "./KeyingTrace";
 
 // Mirror of the keyer list used by SettingsSheet / Step1, kept compact for
 // the in-app quick picker — same value strings so the backend doesn't care
@@ -69,6 +72,20 @@ interface OperationalViewProps {
   onStartTestRecording: () => void;
   onStopTestRecording: () => void;
   onStopTestPlayback: () => void;
+
+  // Optional additions (all have defaults)
+  /** Set only for a real MIDI failure; turns the keyer chip red. */
+  midiError?: string | null;
+  /** Dits/dahs of the character currently being keyed, e.g. "-.." */
+  currentElements?: string;
+  /** Mini mode: render only header, key dot + WPM, keying trace, one-line decoder. */
+  compact?: boolean;
+  onToggleCompact?: () => void;
+  /** Practice mode: toggle card renders when onPracticeModeChange is provided. */
+  practiceMode?: boolean;
+  onPracticeModeChange?: (on: boolean) => void;
+  /** Called (debounced 150 ms) when the tone stepper changes, so the app can play a preview. */
+  onPreviewTone?: (hz: number) => void;
 }
 
 export function OperationalView({
@@ -104,8 +121,29 @@ export function OperationalView({
   onStartTestRecording,
   onStopTestRecording,
   onStopTestPlayback,
+  midiError = null,
+  currentElements,
+  compact = false,
+  onToggleCompact,
+  practiceMode = false,
+  onPracticeModeChange,
+  onPreviewTone,
 }: OperationalViewProps) {
-  const [showDecoder, setShowDecoder] = useState(true);
+  // Tone stepper: apply immediately, preview (debounced) so the new pitch is audible.
+  const previewTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (previewTimer.current) clearTimeout(previewTimer.current);
+    },
+    [],
+  );
+  const changeTone = (hz: number) => {
+    onSidetoneFrequencyChange(hz);
+    if (onPreviewTone) {
+      if (previewTimer.current) clearTimeout(previewTimer.current);
+      previewTimer.current = window.setTimeout(() => onPreviewTone(hz), 150);
+    }
+  };
 
   // Track time since last key event so we can show "Press your key to test"
   // when the operator is idle, but hide the prompt once they're actively
@@ -129,7 +167,7 @@ export function OperationalView({
 
   // Friendly current-mic label for the status row.
   const micLabel = (() => {
-    if (!audioStarted) return "Audio off";
+    if (!audioStarted) return "Not started yet";
     if (!selectedInputDevice) return "No mic selected";
     const match = inputDevices.find((d) => d.internal_name === selectedInputDevice);
     return match ? match.display_name : "Mic ready";
@@ -139,7 +177,9 @@ export function OperationalView({
     ? selectedMidiDevice
       ? friendlyMidiName(selectedMidiDevice)
       : "Vail Adapter ready"
-    : "No Vail Adapter detected";
+    : midiError
+    ? "Keyer error"
+    : "Waiting for Vail Adapter — plug it in via USB";
 
   // Human-readable name for the local sidetone device, used by the "Tone to"
   // chip when the user has routed sidetone to both adapter and computer.
@@ -149,18 +189,68 @@ export function OperationalView({
     return match ? match.display_name : selectedLocalDevice;
   })();
 
+  if (compact) {
+    return (
+      <div className="min-h-screen text-ink px-3 py-2 flex flex-col gap-2">
+        <header className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className={`inline-block w-4 h-4 rounded-full border shrink-0 ${
+                isKeyDown ? "bg-amber-400 border-amber-300" : "bg-surface2 border-line"
+              }`}
+              aria-label={isKeyDown ? "Key down" : "Key up"}
+              role="img"
+            />
+            <span className="text-xl font-mono text-accent-text" aria-live="polite">
+              {estimatedWpm > 0 ? `${estimatedWpm.toFixed(0)} WPM` : "—"}
+            </span>
+            {practiceMode && <span className="text-xs text-accent-text font-semibold">PRACTICE</span>}
+          </div>
+          <button
+            onClick={onToggleCompact}
+            className="min-h-[40px] px-3 bg-surface hover:bg-surface2 rounded-lg text-sm text-ink"
+            aria-label="Expand to full window"
+            title="Expand"
+          >
+            Expand
+          </button>
+        </header>
+        <KeyingTrace isKeyDown={isKeyDown} />
+        <DecoderPanel cwText={cwText} onClear={onClearCwText} currentElements={currentElements} singleLine />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen text-white px-4 py-3 flex flex-col gap-2.5">
+    <div className="min-h-screen text-ink px-4 py-3 flex flex-col gap-2.5">
+      {practiceMode && (
+        <div
+          className="px-3 py-2 bg-amber-500/20 border border-amber-500/60 rounded-lg text-base font-semibold text-accent-text"
+          role="status"
+        >
+          Practice mode — nothing is being sent to your video app
+        </div>
+      )}
       {/* Header */}
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <AppIcon size={28} />
-          <h1 className="text-xl font-bold text-amber-400">Vail Zoomer</h1>
+          <h1 className="text-xl font-bold text-accent-text">Vail Zoomer</h1>
         </div>
         <div className="flex gap-2">
+          {onToggleCompact && (
+            <button
+              onClick={onToggleCompact}
+              className="min-h-[40px] px-3 bg-surface hover:bg-surface2 rounded-lg text-sm text-ink"
+              title="Switch to mini window"
+              aria-label="Switch to mini window"
+            >
+              Mini
+            </button>
+          )}
           <button
             onClick={onOpenSettings}
-            className="min-h-[40px] min-w-[40px] p-2 bg-gray-800 hover:bg-gray-700 rounded-lg"
+            className="min-h-[40px] min-w-[40px] p-2 bg-surface hover:bg-surface2 rounded-lg"
             title="Settings"
             aria-label="Open settings"
           >
@@ -171,7 +261,7 @@ export function OperationalView({
           </button>
           <button
             onClick={onOpenTroubleshoot}
-            className="min-h-[40px] px-3 bg-gray-800 hover:bg-gray-700 rounded-lg flex items-center gap-1.5 text-sm text-gray-200"
+            className="min-h-[40px] px-3 bg-surface hover:bg-surface2 rounded-lg flex items-center gap-1.5 text-sm text-ink"
             title="Troubleshooting"
             aria-label="Open troubleshooting"
           >
@@ -182,7 +272,7 @@ export function OperationalView({
           </button>
           <button
             onClick={onOpenHelp}
-            className="min-h-[40px] min-w-[40px] p-2 bg-gray-800 hover:bg-gray-700 rounded-lg"
+            className="min-h-[40px] min-w-[40px] p-2 bg-surface hover:bg-surface2 rounded-lg"
             title="Help"
             aria-label="Open help"
           >
@@ -199,10 +289,10 @@ export function OperationalView({
         className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-left transition-colors"
         title="Open troubleshooting"
       >
-        <svg className="w-4 h-4 text-amber-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4 text-accent-text shrink-0" fill="currentColor" viewBox="0 0 24 24">
           <path d="M12 3a9 9 0 00-9 9v7a2 2 0 002 2h3v-8H5v-1a7 7 0 0114 0v1h-3v8h3a2 2 0 002-2v-7a9 9 0 00-9-9z" />
         </svg>
-        <span className="text-sm text-amber-100">
+        <span className="text-sm text-ink">
           <strong>Wear headphones</strong> — stops mic-pickup of the tone, prevents feedback, and fixes most audio weirdness.
         </span>
       </button>
@@ -215,18 +305,22 @@ export function OperationalView({
           <button
             onClick={onOpenSettings}
             className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors ${
-              midiConnected ? "hover:bg-gray-700/50" : "bg-red-900/30 hover:bg-red-900/50"
+              midiConnected
+                ? "hover:bg-surface2/50"
+                : midiError
+                ? "bg-red-900/30 hover:bg-red-900/50"
+                : "bg-amber-500/10 hover:bg-amber-500/20"
             }`}
             title="Open settings"
           >
             <span
               className={`inline-block w-3 h-3 rounded-full ${
-                midiConnected ? "bg-green-500" : "bg-red-500"
-              } ${midiConnected ? "" : "animate-pulse"}`}
+                midiConnected ? "bg-green-500" : midiError ? "bg-red-500" : "bg-amber-400"
+              }`}
             />
             <span className="text-sm font-medium text-left leading-tight">
-              <span className="block text-xs text-gray-400">Keyer</span>
-              <span className="block truncate max-w-[180px]">{keyerLabel}</span>
+              <span className="block text-xs text-muted">Keyer</span>
+              <span className={`block ${midiConnected ? "truncate max-w-[180px]" : "max-w-[300px]"}`} title={midiError ?? undefined}>{keyerLabel}</span>
             </span>
             {/* Live key dot — small, attached to the keyer chip */}
             <span
@@ -235,7 +329,7 @@ export function OperationalView({
                   ? "bg-amber-400 border-amber-300 shadow-[0_0_6px_2px_rgba(251,191,36,0.6)]"
                   : recentlyKeyed
                   ? "bg-amber-700/60 border-amber-600"
-                  : "bg-gray-700 border-gray-600"
+                  : "bg-surface2 border-line"
               }`}
               title={isKeyDown ? "Key down" : "Key up"}
               aria-label={isKeyDown ? "Key down" : "Key up"}
@@ -245,17 +339,17 @@ export function OperationalView({
           <button
             onClick={onOpenSettings}
             className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors ${
-              audioStarted ? "hover:bg-gray-700/50" : "bg-red-900/30 hover:bg-red-900/50"
+              audioStarted ? "hover:bg-surface2/50" : "bg-amber-500/10 hover:bg-amber-500/20"
             }`}
             title="Open settings"
           >
             <span
               className={`inline-block w-3 h-3 rounded-full ${
-                audioStarted ? "bg-green-500" : "bg-red-500"
+                audioStarted ? "bg-green-500" : "bg-amber-400"
               }`}
             />
             <span className="text-sm font-medium text-left leading-tight">
-              <span className="block text-xs text-gray-400">Mic</span>
+              <span className="block text-xs text-muted">Mic</span>
               <span className="block truncate max-w-[180px]">{micLabel}</span>
             </span>
           </button>
@@ -266,20 +360,20 @@ export function OperationalView({
           {sidetoneRoute === "Both" && (
             <button
               onClick={onOpenSettings}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-gray-700/50 transition-colors"
+              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-surface2/50 transition-colors"
               title="Local computer-speaker monitoring. Open settings to change."
             >
-              <svg className="w-3.5 h-3.5 text-amber-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 text-accent-text shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
               </svg>
               <span className="text-sm font-medium text-left leading-tight">
-                <span className="block text-xs text-gray-400">Tone monitor (you only)</span>
+                <span className="block text-xs text-muted">Tone monitor (you only)</span>
                 <span className="block truncate max-w-[180px]">{toneOutputLabel}</span>
               </span>
             </button>
           )}
 
-          <div className="ml-auto text-xl font-mono text-amber-400 pr-1" aria-live="polite">
+          <div className="ml-auto text-xl font-mono text-accent-text pr-1" aria-live="polite">
             {estimatedWpm > 0 ? `${estimatedWpm.toFixed(0)} WPM` : "—"}
           </div>
         </div>
@@ -289,20 +383,20 @@ export function OperationalView({
       <Card padded={false}>
         <button
           onClick={() => onMicDuckingChange(!micDucking)}
-          className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl hover:bg-gray-700/30 transition-colors text-left"
+          className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl hover:bg-surface2/30 transition-colors text-left"
           aria-pressed={micDucking}
         >
           <div className="flex-1 min-w-0">
-            <p className="text-base font-medium text-gray-100">
+            <p className="text-base font-medium text-ink">
               Auto-mute mic while sending
             </p>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-muted">
               Mutes your microphone the instant you key down and unmutes it the moment you stop — prevents your sidetone bouncing back as feedback.
             </p>
           </div>
           <span
             className={`relative w-12 h-7 rounded-full transition-colors flex-shrink-0 ${
-              micDucking ? "bg-amber-500" : "bg-gray-600"
+              micDucking ? "bg-amber-500" : "bg-line"
             }`}
           >
             <span
@@ -314,99 +408,115 @@ export function OperationalView({
         </button>
       </Card>
 
+      {onPracticeModeChange && (
+        <Card padded={false}>
+          <button
+            onClick={() => onPracticeModeChange(!practiceMode)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl hover:bg-surface2/30 transition-colors text-left"
+            aria-pressed={practiceMode}
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-base font-medium text-ink">Practice mode</p>
+              <p className="text-sm text-muted">
+                Sidetone plays only in your headphones and nothing goes to the video app. Decoder keeps running so you can drill.
+              </p>
+            </div>
+            <span
+              className={`relative w-12 h-7 rounded-full transition-colors flex-shrink-0 ${
+                practiceMode ? "bg-amber-500" : "bg-line"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform ${
+                  practiceMode ? "left-[22px]" : "left-0.5"
+                }`}
+              />
+            </span>
+          </button>
+        </Card>
+      )}
+
       {/* Live audio — signal flow diagram */}
       <Card>
-        <h3 className="text-base font-semibold text-gray-200 mb-3">Live audio</h3>
+        <h3 className="text-base font-semibold text-ink mb-3">Live audio</h3>
 
         <div className="flex items-stretch gap-2">
           {/* Mic */}
-          <div className="flex-1 bg-gray-800/60 border border-gray-700 rounded-xl p-3 flex flex-col items-center gap-2 min-w-0">
-            <div className="flex items-center gap-1.5 text-gray-300">
+          <div className="flex-1 bg-surface/60 border border-line rounded-xl p-3 flex flex-col items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 text-muted">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-14 0m7 7v4m-4 0h8m-4-8a3 3 0 01-3-3V5a3 3 0 016 0v6a3 3 0 01-3 3z" />
               </svg>
               <span className="text-sm font-medium">Your mic</span>
             </div>
-            <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-75 ${
-                  micLevel > 0.8 ? "bg-red-500" : micLevel > 0.5 ? "bg-amber-400" : "bg-green-500"
-                }`}
-                style={{ width: `${Math.min(micLevel * 100, 100)}%` }}
-              />
-            </div>
-            <span className="text-xs text-gray-400 tabular-nums">{Math.round(micLevel * 100)}%</span>
+            <LevelMeter level={micLevel} label="Your mic" />
           </div>
 
           {/* Arrow */}
-          <div className="flex items-center text-gray-500 shrink-0">
+          <div className="flex items-center text-muted shrink-0">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
             </svg>
           </div>
 
           {/* Vail Adapter — key indicator */}
-          <div className="flex-1 bg-gray-800/60 border border-gray-700 rounded-xl p-3 flex flex-col items-center gap-2 min-w-0">
-            <span className="text-sm font-medium text-gray-300 text-center leading-tight">
+          <div className="flex-1 bg-surface/60 border border-line rounded-xl p-3 flex flex-col items-center gap-2 min-w-0">
+            <span className="text-sm font-medium text-muted text-center leading-tight">
               Vail Adapter
             </span>
             <div
               className={`w-7 h-7 rounded-full border-2 transition-all duration-75 flex items-center justify-center ${
                 isKeyDown
                   ? "bg-amber-500 border-amber-400 shadow-md shadow-amber-500/50"
-                  : "bg-gray-700 border-gray-600"
+                  : "bg-surface2 border-line"
               }`}
             >
               <span
                 className={`text-base font-bold leading-none ${
-                  isKeyDown ? "text-gray-900" : "text-gray-500"
+                  isKeyDown ? "text-gray-900" : "text-muted"
                 }`}
               >
                 {isKeyDown ? "●" : "○"}
               </span>
             </div>
-            <span className={`text-xs ${isKeyDown ? "text-amber-400" : "text-gray-500"}`}>
+            <span className={`text-xs ${isKeyDown ? "text-accent-text" : "text-muted"}`}>
               {isKeyDown ? "keying" : "idle"}
             </span>
           </div>
 
           {/* Arrow */}
-          <div className="flex items-center text-gray-500 shrink-0">
+          <div className="flex items-center text-muted shrink-0">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
             </svg>
           </div>
 
           {/* Zoom output — merged signal */}
-          <div className="flex-1 bg-gray-800/60 border border-gray-700 rounded-xl p-3 flex flex-col items-center gap-2 min-w-0">
-            <div className="flex items-center gap-1.5 text-gray-300">
+          <div className="flex-1 bg-surface/60 border border-line rounded-xl p-3 flex flex-col items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 text-muted">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              <span className="text-sm font-medium">To video app</span>
+              <span className="text-sm font-medium">{practiceMode ? "To video app (muted)" : "To video app"}</span>
             </div>
-            <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-75 ${
-                  outputLevel > 0.8 ? "bg-red-500" : outputLevel > 0.5 ? "bg-amber-400" : "bg-green-500"
-                }`}
-                style={{ width: `${Math.min(outputLevel * 100, 100)}%` }}
-              />
-            </div>
-            <span className="text-xs text-gray-400 tabular-nums">{Math.round(outputLevel * 100)}%</span>
+            <LevelMeter level={outputLevel} label={practiceMode ? "To video app (muted)" : "To video app"} />
           </div>
         </div>
 
+        <div className="mt-3">
+          <KeyingTrace isKeyDown={isKeyDown} />
+        </div>
+
         {/* Test recording — compact */}
-        <div className="border-t border-gray-700 mt-3 pt-3 flex items-center gap-3 flex-wrap">
-          <span className="text-sm text-gray-400 flex-1 min-w-[180px]">
+        <div className="border-t border-line mt-3 pt-3 flex items-center gap-3 flex-wrap">
+          <span className="text-sm text-muted flex-1 min-w-[180px]">
             Record 5 s and play it back to hear what Zoom hears.
           </span>
           {testRecordingState === "idle" && (
             <button
               onClick={onStartTestRecording}
               disabled={!audioStarted}
-              className="flex items-center gap-2 min-h-[40px] px-4 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+              className="flex items-center gap-2 min-h-[40px] px-4 bg-surface2 hover:bg-line disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
             >
               <svg className="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="8" />
@@ -427,7 +537,7 @@ export function OperationalView({
               </div>
               <button
                 onClick={onStopTestRecording}
-                className="min-h-[40px] px-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+                className="min-h-[40px] px-3 bg-surface2 hover:bg-line rounded-lg text-sm"
               >
                 Stop
               </button>
@@ -441,7 +551,7 @@ export function OperationalView({
                   <path d="M8 5v14l11-7z" />
                 </svg>
                 <span className="text-green-300 text-sm font-medium">Playing…</span>
-                <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden min-w-[80px]">
+                <div className="flex-1 h-1.5 bg-surface2 rounded-full overflow-hidden min-w-[80px]">
                   <div
                     className="h-full bg-green-500 transition-all duration-100"
                     style={{ width: `${testPlaybackProgress * 100}%` }}
@@ -450,7 +560,7 @@ export function OperationalView({
               </div>
               <button
                 onClick={onStopTestPlayback}
-                className="min-h-[40px] px-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+                className="min-h-[40px] px-3 bg-surface2 hover:bg-line rounded-lg text-sm"
               >
                 Stop
               </button>
@@ -464,12 +574,12 @@ export function OperationalView({
         <div className="flex items-center gap-3 px-3 py-2 flex-wrap">
           {/* Key type */}
           <label className="flex items-center gap-2">
-            <span className="text-sm text-gray-400 whitespace-nowrap">Key</span>
+            <span className="text-sm text-muted whitespace-nowrap">Key</span>
             <div className="relative">
               <select
                 value={keyerType}
                 onChange={(e) => onKeyerTypeChange(e.target.value)}
-                className="appearance-none bg-gray-700 border-2 border-gray-600 rounded-lg text-sm text-gray-100 pl-3 pr-8 py-1.5 hover:border-gray-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-500/40 cursor-pointer transition-colors"
+                className="appearance-none bg-surface2 border-2 border-line rounded-lg text-sm text-ink pl-3 pr-8 py-1.5 hover:border-muted focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-500/40 cursor-pointer transition-colors"
                 aria-label="Key type"
               >
                 {QUICK_KEYER_TYPES.map((k) => (
@@ -479,7 +589,7 @@ export function OperationalView({
                 ))}
               </select>
               <svg
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -491,21 +601,21 @@ export function OperationalView({
 
           {/* WPM stepper */}
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400 whitespace-nowrap">Speed</span>
-            <div className="inline-flex items-stretch rounded-lg border-2 border-gray-600 bg-gray-700 overflow-hidden">
+            <span className="text-sm text-muted whitespace-nowrap">Speed</span>
+            <div className="inline-flex items-stretch rounded-lg border-2 border-line bg-surface2 overflow-hidden">
               <button
                 onClick={() => onWpmChange(Math.max(5, wpm - 1))}
-                className="w-8 text-lg font-semibold text-gray-200 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 transition-colors border-r border-gray-600 leading-none"
+                className="w-8 text-lg font-semibold text-ink bg-surface2 hover:bg-line active:bg-line transition-colors border-r border-line leading-none"
                 aria-label="Decrease WPM"
               >
                 −
               </button>
-              <span className="tabular-nums text-sm font-medium text-gray-100 w-16 text-center self-center px-1">
+              <span className="tabular-nums text-sm font-medium text-ink w-16 text-center self-center px-1">
                 {wpm} WPM
               </span>
               <button
                 onClick={() => onWpmChange(Math.min(50, wpm + 1))}
-                className="w-8 text-lg font-semibold text-gray-200 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 transition-colors border-l border-gray-600 leading-none"
+                className="w-8 text-lg font-semibold text-ink bg-surface2 hover:bg-line active:bg-line transition-colors border-l border-line leading-none"
                 aria-label="Increase WPM"
               >
                 +
@@ -515,21 +625,21 @@ export function OperationalView({
 
           {/* Tone stepper (Hz) */}
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400 whitespace-nowrap">Tone</span>
-            <div className="inline-flex items-stretch rounded-lg border-2 border-gray-600 bg-gray-700 overflow-hidden">
+            <span className="text-sm text-muted whitespace-nowrap">Tone</span>
+            <div className="inline-flex items-stretch rounded-lg border-2 border-line bg-surface2 overflow-hidden">
               <button
-                onClick={() => onSidetoneFrequencyChange(Math.max(300, sidetoneFrequency - 25))}
-                className="w-8 text-lg font-semibold text-gray-200 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 transition-colors border-r border-gray-600 leading-none"
+                onClick={() => changeTone(Math.max(300, sidetoneFrequency - 25))}
+                className="w-8 text-lg font-semibold text-ink bg-surface2 hover:bg-line active:bg-line transition-colors border-r border-line leading-none"
                 aria-label="Lower tone"
               >
                 −
               </button>
-              <span className="tabular-nums text-sm font-medium text-gray-100 w-16 text-center self-center px-1">
+              <span className="tabular-nums text-sm font-medium text-ink w-16 text-center self-center px-1">
                 {sidetoneFrequency} Hz
               </span>
               <button
-                onClick={() => onSidetoneFrequencyChange(Math.min(1200, sidetoneFrequency + 25))}
-                className="w-8 text-lg font-semibold text-gray-200 bg-gray-700 hover:bg-gray-600 active:bg-gray-500 transition-colors border-l border-gray-600 leading-none"
+                onClick={() => changeTone(Math.min(1200, sidetoneFrequency + 25))}
+                className="w-8 text-lg font-semibold text-ink bg-surface2 hover:bg-line active:bg-line transition-colors border-l border-line leading-none"
                 aria-label="Raise tone"
               >
                 +
@@ -539,41 +649,7 @@ export function OperationalView({
         </div>
       </Card>
 
-      {/* Decoded morse — collapsible */}
-      <Card padded={false}>
-        <button
-          onClick={() => setShowDecoder((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2 text-base font-medium text-gray-200 hover:text-white rounded-lg"
-          aria-expanded={showDecoder}
-        >
-          <span>Decoded morse</span>
-          <svg
-            className={`w-4 h-4 transition-transform ${showDecoder ? "rotate-180" : ""}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {showDecoder && (
-          <div className="px-3 pb-3">
-            <div className="p-3 bg-black rounded-lg font-mono text-lg min-h-[64px] max-h-[140px] overflow-y-auto break-words leading-relaxed">
-              {cwText || <span className="text-gray-500">Waiting for morse…</span>}
-            </div>
-            {cwText && (
-              <div className="flex justify-end mt-2">
-                <button
-                  onClick={onClearCwText}
-                  className="min-h-[36px] px-3 text-sm bg-gray-700 hover:bg-gray-600 rounded-lg"
-                >
-                  Clear
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </Card>
+      <DecoderPanel cwText={cwText} onClear={onClearCwText} currentElements={currentElements} />
 
       {/* Footer — video app tips */}
       <div className="mt-auto pt-1">

@@ -67,7 +67,7 @@ export function InfoBox({
           {title && (
             <h4 className={`text-xl font-bold mb-2 ${styles.title}`}>{title}</h4>
           )}
-          <div className="text-base text-gray-100 leading-relaxed">{children}</div>
+          <div className="text-base text-ink leading-relaxed">{children}</div>
         </div>
       </div>
     </div>

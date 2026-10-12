@@ -129,18 +129,18 @@ export function Step2VirtualAudio({
 
         {/* Detected — Mac/Windows fast path */}
         {(currentOS === "macos" || currentOS === "windows") && driverInstalled && !forceShowInstall && (
-          <div className="bg-gray-800 rounded-2xl p-5 flex items-start gap-3">
+          <div className="bg-surface2 rounded-2xl p-5 flex items-start gap-3">
             <span className="text-3xl text-green-400 leading-none">✓</span>
             <div className="flex-1">
               <p className="text-lg text-green-300 font-medium">
                 {currentOS === "macos" ? "BlackHole detected" : "VB-Cable detected"}
               </p>
-              <p className="text-base text-gray-200 mt-1">
+              <p className="text-base text-ink mt-1">
                 You're already set. Moving you to the next step…
               </p>
               <button
                 onClick={() => setForceShowInstall(true)}
-                className="mt-3 min-h-[44px] px-3 text-sm text-gray-300 hover:text-amber-300 underline"
+                className="mt-3 min-h-[44px] px-3 text-sm text-muted hover:text-accent-text underline"
               >
                 Show install instructions anyway
               </button>
@@ -150,22 +150,22 @@ export function Step2VirtualAudio({
 
         {currentOS === "windows" && (!isWinDriverInstalled || forceShowInstall) && (
           <div className="space-y-3">
-            <div className="bg-gray-800 rounded-2xl p-5 space-y-3">
-              <h3 className="text-xl font-semibold text-amber-400">Install VB-Cable (free)</h3>
-              <ol className="list-decimal list-inside space-y-2 text-base text-gray-200">
+            <div className="bg-surface2 rounded-2xl p-5 space-y-3">
+              <h3 className="text-xl font-semibold text-accent-text">Install VB-Cable (free)</h3>
+              <ol className="list-decimal list-inside space-y-2 text-base text-ink">
                 <li>
                   Download from{" "}
                   <a
                     href="https://vb-audio.com/Cable/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-amber-400 underline"
+                    className="text-accent-text underline"
                   >
                     vb-audio.com/Cable
                   </a>
                 </li>
                 <li>Extract the zip file</li>
-                <li>Right-click <code className="bg-gray-700 px-1 rounded">VBCABLE_Setup_x64.exe</code> → Run as administrator</li>
+                <li>Right-click <code className="bg-surface2 px-1 rounded">VBCABLE_Setup_x64.exe</code> → Run as administrator</li>
                 <li>Click "Install Driver" and follow the prompts</li>
                 <li><strong>Restart your computer</strong> after installation</li>
               </ol>
@@ -181,16 +181,16 @@ export function Step2VirtualAudio({
 
         {currentOS === "macos" && (!isMacDriverInstalled || forceShowInstall) && (
           <div className="space-y-3">
-            <div className="bg-gray-800 rounded-2xl p-5 space-y-3">
-              <h3 className="text-xl font-semibold text-amber-400">Install BlackHole (free)</h3>
-              <ol className="list-decimal list-inside space-y-2 text-base text-gray-200">
+            <div className="bg-surface2 rounded-2xl p-5 space-y-3">
+              <h3 className="text-xl font-semibold text-accent-text">Install BlackHole (free)</h3>
+              <ol className="list-decimal list-inside space-y-2 text-base text-ink">
                 <li>
                   Download <strong>BlackHole 2ch</strong> from{" "}
                   <a
                     href="https://existential.audio/blackhole/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-amber-400 underline"
+                    className="text-accent-text underline"
                   >
                     existential.audio/blackhole
                   </a>
@@ -211,12 +211,12 @@ export function Step2VirtualAudio({
         {currentOS === "linux" && (
           <div className="space-y-3">
             {/* Single status card — verbose log lives behind Advanced. */}
-            <div className="bg-gray-800 rounded-2xl p-5 space-y-3">
+            <div className="bg-surface2 rounded-2xl p-5 space-y-3">
               {/* Working state */}
               {linuxSetupInProgress && (
                 <div className="flex items-center gap-3">
                   <span className="inline-block w-4 h-4 rounded-full bg-amber-400 animate-pulse" />
-                  <p className="text-lg text-amber-300">Setting up audio routing…</p>
+                  <p className="text-lg text-accent-text">Setting up audio routing…</p>
                 </div>
               )}
 
@@ -226,7 +226,7 @@ export function Step2VirtualAudio({
                   <span className="text-3xl text-green-400 leading-none">✓</span>
                   <div>
                     <p className="text-lg text-green-300 font-medium">Audio routing is ready</p>
-                    <p className="text-base text-gray-200">
+                    <p className="text-base text-ink">
                       Virtual mic + speaker installed and will come back on every login.
                     </p>
                   </div>
@@ -237,10 +237,10 @@ export function Step2VirtualAudio({
               {!linuxSetupInProgress && linuxMissingPkgs.length > 0 && onInstallLinuxAudioPrereqs && (
                 <div className="space-y-3">
                   <div className="flex items-start gap-3">
-                    <span className="text-3xl text-amber-400 leading-none">!</span>
+                    <span className="text-3xl text-accent-text leading-none">!</span>
                     <div>
-                      <p className="text-lg text-amber-300 font-medium">Missing audio packages</p>
-                      <p className="text-base text-gray-200">
+                      <p className="text-lg text-accent-text font-medium">Missing audio packages</p>
+                      <p className="text-base text-ink">
                         Install {linuxMissingPkgs.join(", ")} — you'll see one password prompt.
                       </p>
                     </div>
@@ -262,8 +262,8 @@ export function Step2VirtualAudio({
                     <span className="text-3xl text-red-400 leading-none">✗</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-lg text-red-300 font-medium">Audio setup failed</p>
-                      <p className="text-base text-gray-200 mt-1 break-words">{linuxSetupError}</p>
-                      <p className="text-sm text-gray-400 mt-2">
+                      <p className="text-base text-ink mt-1 break-words">{linuxSetupError}</p>
+                      <p className="text-sm text-muted mt-2">
                         Copy the error and share it with the developers if retrying doesn't fix it.
                       </p>
                     </div>
@@ -285,7 +285,7 @@ export function Step2VirtualAudio({
                           "error",
                         )
                       }
-                      className="min-h-[44px] px-3 text-base bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg"
+                      className="min-h-[44px] px-3 text-base bg-surface2 hover:bg-line text-ink rounded-lg"
                     >
                       {copiedKind === "error" ? "Copied" : "Copy for developer"}
                     </button>
@@ -294,10 +294,10 @@ export function Step2VirtualAudio({
               )}
 
               {/* Advanced toggle — opens the full log only on demand */}
-              <div className="pt-2 border-t border-gray-700">
+              <div className="pt-2 border-t border-line">
                 <button
                   onClick={() => setShowAdvanced((v) => !v)}
-                  className="min-h-[44px] text-base text-gray-300 hover:text-gray-100"
+                  className="min-h-[44px] text-base text-muted hover:text-ink"
                 >
                   {showAdvanced ? "▾ Hide advanced details" : "▸ Show advanced details"}
                 </button>
@@ -306,9 +306,9 @@ export function Step2VirtualAudio({
               {showAdvanced && (
                 <div className="space-y-2">
                   <div className="relative">
-                    <div className="bg-gray-900 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-sm">
+                    <div className="bg-app rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-sm">
                       {linuxSetupLog.length === 0 ? (
-                        <p className="text-gray-400">No log yet.</p>
+                        <p className="text-muted">No log yet.</p>
                       ) : (
                         linuxSetupLog.map((line, i) => (
                           <div
@@ -316,8 +316,8 @@ export function Step2VirtualAudio({
                             className={
                               line.startsWith("✓") ? "text-green-400" :
                               line.startsWith("✗") ? "text-red-400" :
-                              line.startsWith("Warning") || line.startsWith("⚠") ? "text-amber-400" :
-                              "text-gray-200"
+                              line.startsWith("Warning") || line.startsWith("⚠") ? "text-accent-text" :
+                              "text-ink"
                             }
                           >
                             {line}
@@ -329,7 +329,7 @@ export function Step2VirtualAudio({
                     {linuxSetupLog.length > 0 && (
                       <button
                         onClick={() => copyToClipboard(linuxSetupLog.join("\n"), "log")}
-                        className="absolute top-2 right-2 min-h-[36px] text-sm bg-gray-700 hover:bg-gray-600 text-gray-200 px-2 py-1 rounded"
+                        className="absolute top-2 right-2 min-h-[36px] text-sm bg-surface2 hover:bg-line text-ink px-2 py-1 rounded"
                       >
                         {copiedKind === "log" ? "Copied" : "Copy log"}
                       </button>
@@ -339,7 +339,7 @@ export function Step2VirtualAudio({
                     <button
                       onClick={() => onSetupLinuxAudio()}
                       disabled={linuxInstallInProgress}
-                      className="min-h-[44px] text-base text-amber-400 hover:text-amber-300 underline"
+                      className="min-h-[44px] text-base text-accent-text hover:text-accent-text underline"
                     >
                       Re-run setup
                     </button>

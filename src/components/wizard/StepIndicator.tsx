@@ -19,10 +19,10 @@ export function StepIndicator({
               <div
                 className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-bold transition-colors ${
                   step < currentStep
-                    ? "bg-green-500 text-white"
+                    ? "bg-green-600 text-white"
                     : step === currentStep
                       ? "bg-amber-500 text-gray-900"
-                      : "bg-gray-700 text-gray-400"
+                      : "bg-surface2 text-muted"
                 }`}
               >
                 {step < currentStep ? (
@@ -36,7 +36,7 @@ export function StepIndicator({
               {stepLabels[step - 1] && (
                 <span
                   className={`text-sm mt-1 font-medium ${
-                    step === currentStep ? "text-amber-400" : "text-gray-400"
+                    step === currentStep ? "text-accent-text" : "text-muted"
                   }`}
                 >
                   {stepLabels[step - 1]}
@@ -46,7 +46,7 @@ export function StepIndicator({
             {step < totalSteps && (
               <div
                 className={`w-10 h-1 mx-1 rounded-full mb-6 ${
-                  step < currentStep ? "bg-green-500" : "bg-gray-700"
+                  step < currentStep ? "bg-green-500" : "bg-surface2"
                 }`}
               />
             )}

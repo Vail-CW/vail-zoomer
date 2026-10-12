@@ -100,7 +100,7 @@ export function Step1KeyerSetup({
           </InfoBox>
         ) : !midiConnected ? (
           <div className="space-y-2">
-            <p className="text-sm text-gray-300">
+            <p className="text-sm text-muted">
               Pick your adapter from the list. It connects automatically.
             </p>
             {vailDevices.map((device) => (
@@ -109,8 +109,8 @@ export function Step1KeyerSetup({
                 onClick={() => onSelectMidiDevice(device)}
                 className={`w-full px-4 py-3 text-left rounded-xl border-2 transition-colors ${
                   selectedMidiDevice === device
-                    ? "bg-amber-500/15 border-amber-400 text-white"
-                    : "bg-gray-800 border-gray-600 text-gray-200 hover:border-gray-500"
+                    ? "bg-amber-500/15 border-amber-400 text-ink"
+                    : "bg-surface2 border-line text-ink hover:border-muted"
                 }`}
               >
                 <div className="flex items-center gap-3">
@@ -118,11 +118,11 @@ export function Step1KeyerSetup({
                     className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
                       selectedMidiDevice === device
                         ? "border-amber-400 bg-amber-500"
-                        : "border-gray-500"
+                        : "border-line"
                     }`}
                   >
                     {selectedMidiDevice === device && (
-                      <div className="w-2 h-2 rounded-full bg-gray-900" />
+                      <div className="w-2 h-2 rounded-full bg-app" />
                     )}
                   </div>
                   <span className="text-base">{friendlyDeviceLabel(device)}</span>
@@ -132,7 +132,7 @@ export function Step1KeyerSetup({
             {otherDevices.length > 0 && (
               <>
                 {vailDevices.length > 0 && (
-                  <p className="text-xs text-gray-400 pt-1">Other MIDI devices</p>
+                  <p className="text-xs text-muted pt-1">Other MIDI devices</p>
                 )}
                 {otherDevices.map((device) => (
                   <button
@@ -140,8 +140,8 @@ export function Step1KeyerSetup({
                     onClick={() => onSelectMidiDevice(device)}
                     className={`w-full px-4 py-3 text-left rounded-xl border-2 transition-colors ${
                       selectedMidiDevice === device
-                        ? "bg-amber-500/15 border-amber-400 text-white"
-                        : "bg-gray-800 border-gray-600 text-gray-200 hover:border-gray-500"
+                        ? "bg-amber-500/15 border-amber-400 text-ink"
+                        : "bg-surface2 border-line text-ink hover:border-muted"
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -149,11 +149,11 @@ export function Step1KeyerSetup({
                         className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
                           selectedMidiDevice === device
                             ? "border-amber-400 bg-amber-500"
-                            : "border-gray-500"
+                            : "border-line"
                         }`}
                       >
                         {selectedMidiDevice === device && (
-                          <div className="w-2 h-2 rounded-full bg-gray-900" />
+                          <div className="w-2 h-2 rounded-full bg-app" />
                         )}
                       </div>
                       <span className="text-base">{friendlyDeviceLabel(device)}</span>
@@ -175,13 +175,13 @@ export function Step1KeyerSetup({
               <p className="text-sm font-medium text-green-100 truncate">
                 {selectedMidiDevice ? friendlyDeviceLabel(selectedMidiDevice) : "Vail Adapter"} connected
               </p>
-              <p className="text-xs text-gray-300">Press your key — the dot lights up.</p>
+              <p className="text-xs text-muted">Press your key — the dot lights up.</p>
             </div>
             <span
               className={`inline-block w-5 h-5 rounded-full border-2 transition-all duration-75 shrink-0 ${
                 isKeyDown
                   ? "bg-amber-400 border-amber-300 shadow-[0_0_8px_2px_rgba(251,191,36,0.6)]"
-                  : "bg-gray-700 border-gray-600"
+                  : "bg-surface2 border-line"
               }`}
               aria-label={isKeyDown ? "Key down" : "Key up"}
             />
@@ -192,7 +192,7 @@ export function Step1KeyerSetup({
             stays visible without scrolling on 1080p. */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1">
-            <label className="block text-sm text-gray-300 font-medium">Key type</label>
+            <label className="block text-sm text-muted font-medium">Key type</label>
             <BigSelect
               value={keyerType}
               onChange={onKeyerTypeChange}
@@ -203,9 +203,9 @@ export function Step1KeyerSetup({
 
           {keyerType !== "Straight" && (
             <div className="space-y-1">
-              <label className="flex justify-between items-baseline text-sm text-gray-300 font-medium">
+              <label className="flex justify-between items-baseline text-sm text-muted font-medium">
                 <span>Speed</span>
-                <span className="text-amber-400 font-bold">{wpm} WPM</span>
+                <span className="text-accent-text font-bold">{wpm} WPM</span>
               </label>
               <input
                 type="range"
@@ -232,7 +232,7 @@ export function Step1KeyerSetup({
               className="w-full"
               aria-label="Tone pitch"
             />
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-muted">
               You can change pitch, speed, and key type any time from the main screen.
             </p>
           </div>

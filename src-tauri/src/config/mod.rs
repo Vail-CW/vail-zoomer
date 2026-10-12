@@ -17,13 +17,16 @@ pub enum KeyerType {
     Keyahead,
 }
 
-/// Audio mixing mode
+/// Requested audio buffer size. `Auto` lets the driver choose; `Low` asks for
+/// 128 frames (lowest latency, needs a healthy driver); `Safe` asks for 1024
+/// frames (resists glitches on slow machines). Falls back to the driver
+/// default when the device cannot honor the request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum MixMode {
+pub enum BufferSizeMode {
     #[default]
-    AlwaysMix,
-    CwMutesMic,
-    PushToTalkVoice,
+    Auto,
+    Low,
+    Safe,
 }
 
 /// Where to route sidetone audio
@@ -35,26 +38,27 @@ pub enum SidetoneRoute {
     Both,            // Both local speakers and output
 }
 
-/// Application settings
+/// Application settings.
+///
+/// Struct-level `serde(default)` so settings.json files written by older
+/// versions (missing newer fields, or carrying removed ones) still load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     // Keyer settings
     pub keyer_type: KeyerType,
     pub wpm: f32,
-    pub dit_dah_ratio: f32,
-    pub weighting: f32,
-    pub swap_paddles: bool,
 
     // Sidetone settings
     pub sidetone_frequency: f32,
     pub sidetone_volume: f32,       // Volume for sidetone going to Zoom/output
     pub local_sidetone_volume: f32, // Volume for local monitoring (headphones/speakers)
     pub sidetone_route: SidetoneRoute,
+    pub sidetone_rise_ms: f32,      // Raised-cosine rise/fall time, clamped 1..=20 ms
 
     // Audio settings
     pub mic_volume: f32,
-    pub mix_mode: MixMode,
-    #[serde(default)]
+    pub buffer_size_mode: BufferSizeMode,
     pub mic_ducking: bool,  // Mute mic while sending CW (with 250ms hold after key up)
     pub local_output_device: Option<String>,  // For local sidetone monitoring
 
@@ -64,8 +68,11 @@ pub struct Settings {
     pub output_device: Option<String>,
 
     // Linux-specific: whether virtual audio setup has been completed
-    #[serde(default)]
     pub linux_audio_setup_completed: bool,
+
+    // UI preferences (the audio engine ignores these)
+    pub theme: String,
+    pub practice_mode: bool,
 }
 
 impl Default for Settings {
@@ -73,21 +80,21 @@ impl Default for Settings {
         Self {
             keyer_type: KeyerType::default(),
             wpm: 18.0,
-            dit_dah_ratio: 3.0,
-            weighting: 0.0,
-            swap_paddles: false,
             sidetone_frequency: 600.0,
             sidetone_volume: 0.5,
             local_sidetone_volume: 0.3,
             sidetone_route: SidetoneRoute::default(),
             mic_volume: 1.0,
-            mix_mode: MixMode::default(),
+            sidetone_rise_ms: 5.0,
+            buffer_size_mode: BufferSizeMode::default(),
             mic_ducking: false,
             local_output_device: None,
             midi_device: None,
             input_device: None,
             output_device: None,
             linux_audio_setup_completed: false,
+            theme: "dark".to_string(),
+            practice_mode: false,
         }
     }
 }

@@ -34,7 +34,7 @@ export function LocalOutputPicker({
 
   return (
     <div className="space-y-1">
-      <label className="block text-lg text-gray-200 font-medium">{label}</label>
+      <label className="block text-lg text-ink font-medium">{label}</label>
       <BigSelect
         value={selectedIsAvailable ? selectedLocalDevice! : ""}
         onChange={(v) => onLocalDeviceChange(v || null)}
@@ -46,7 +46,7 @@ export function LocalOutputPicker({
         hidePlaceholder
       />
       {candidates.length === 0 && (
-        <p className="text-sm text-amber-300">
+        <p className="text-sm text-accent-text">
           No speakers or headphones detected — plug something in.
         </p>
       )}

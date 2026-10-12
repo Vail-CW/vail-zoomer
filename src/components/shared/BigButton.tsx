@@ -16,15 +16,15 @@ export function BigButton({
   className = "",
 }: BigButtonProps) {
   const baseStyles =
-    "min-h-[60px] px-8 py-4 text-xl font-semibold rounded-xl transition-colors focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-offset-gray-900";
+    "min-h-[60px] px-8 py-4 text-xl font-semibold rounded-xl transition-colors focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-offset-app";
 
   const variantStyles = {
     primary:
-      "bg-amber-500 hover:bg-amber-400 text-gray-900 focus:ring-amber-500 disabled:bg-gray-600 disabled:text-gray-400",
+      "bg-amber-500 hover:bg-amber-400 text-gray-900 focus:ring-amber-500 disabled:opacity-50",
     secondary:
-      "bg-gray-700 hover:bg-gray-600 text-white focus:ring-gray-500 disabled:bg-gray-800 disabled:text-gray-500",
+      "bg-surface2 hover:bg-line text-ink focus:ring-gray-500 disabled:opacity-50",
     success:
-      "bg-green-600 hover:bg-green-500 text-white focus:ring-green-500 disabled:bg-gray-600 disabled:text-gray-400",
+      "bg-green-600 hover:bg-green-500 text-white focus:ring-green-500 disabled:opacity-50",
   };
 
   return (

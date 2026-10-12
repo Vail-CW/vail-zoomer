@@ -122,6 +122,11 @@ impl CwEngine {
         self.decoder.estimate_wpm()
     }
 
+    /// The partial character built so far as dits/dahs (e.g. "-..")
+    pub fn current_pattern(&self) -> &str {
+        self.decoder.current_pattern()
+    }
+
     /// Get current WPM setting
     pub fn wpm(&self) -> f32 {
         self.wpm

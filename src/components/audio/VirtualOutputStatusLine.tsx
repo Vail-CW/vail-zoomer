@@ -20,7 +20,7 @@ export function VirtualOutputStatusLine({ status }: VirtualOutputStatusLineProps
   return (
     <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 ${tone.container}`}>
       <span className={`text-2xl leading-none ${tone.icon}`}>{tone.glyph}</span>
-      <p className="text-base text-gray-100">{status.text}</p>
+      <p className="text-base text-ink">{status.text}</p>
     </div>
   );
 }

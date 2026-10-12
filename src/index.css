@@ -2,12 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens (space-separated RGB so Tailwind alpha works).
+   <html data-theme="dark|light|system">; no attribute behaves like dark
+   unless the OS prefers light and data-theme is "system" or absent. */
+:root,
+:root[data-theme="dark"] {
+  --bg: 15 23 42;
+  --surface: 31 41 55;
+  --surface-2: 55 65 81;
+  --border: 75 85 99;
+  --text: 243 244 246;
+  --text-muted: 156 163 175;
+  --accent: 245 158 11;
+  --accent-text: 251 191 36;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: 243 244 246;
+  --surface: 255 255 255;
+  --surface-2: 229 231 235;
+  --border: 209 213 219;
+  --text: 17 24 39;
+  --text-muted: 75 85 99;
+  --accent: 217 119 6;
+  --accent-text: 180 83 9;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"],
+  :root:not([data-theme]) {
+    --bg: 243 244 246;
+    --surface: 255 255 255;
+    --surface-2: 229 231 235;
+    --border: 209 213 219;
+    --text: 17 24 39;
+    --text-muted: 75 85 99;
+    --accent: 217 119 6;
+    --accent-text: 180 83 9;
+    color-scheme: light;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-pulse {
+    animation: none !important;
+  }
+}
+
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #f3f4f6;
-  background-color: #0f172a;
+  color: rgb(var(--text));
+  background-color: rgb(var(--bg));
   font-size: 17px;
 }
 
@@ -15,12 +72,12 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #0f172a;
+  background-color: rgb(var(--bg));
 }
 
 /* Improved focus states for keyboard navigation */
 *:focus-visible {
-  outline: 3px solid #f59e0b;
+  outline: 3px solid rgb(var(--accent));
   outline-offset: 2px;
 }
 
@@ -33,7 +90,7 @@ input[type="range"] {
 }
 
 input[type="range"]::-webkit-slider-runnable-track {
-  background: #374151;
+  background: rgb(var(--surface-2));
   height: 14px;
   border-radius: 7px;
 }
@@ -44,14 +101,14 @@ input[type="range"]::-webkit-slider-thumb {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #f59e0b;
+  background: rgb(var(--accent));
   margin-top: -7px;
-  border: 2px solid #1f2937;
+  border: 2px solid rgb(var(--surface));
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 input[type="range"]::-moz-range-track {
-  background: #374151;
+  background: rgb(var(--surface-2));
   height: 14px;
   border-radius: 7px;
 }
@@ -60,27 +117,51 @@ input[type="range"]::-moz-range-thumb {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #f59e0b;
-  border: 2px solid #1f2937;
+  background: rgb(var(--accent));
+  border: 2px solid rgb(var(--surface));
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 input[type="range"]:focus-visible::-webkit-slider-thumb {
-  outline: 3px solid #f59e0b;
+  outline: 3px solid rgb(var(--accent));
   outline-offset: 2px;
 }
 
 input[type="range"]:focus-visible::-moz-range-thumb {
-  outline: 3px solid #f59e0b;
+  outline: 3px solid rgb(var(--accent));
   outline-offset: 2px;
 }
 
 /* Fix dropdown options readability on Linux */
 select {
-  color-scheme: dark;
+  color-scheme: inherit;
 }
 
 select option {
-  background-color: #374151; /* gray-700 */
-  color: white;
+  background-color: rgb(var(--surface-2));
+  color: rgb(var(--text));
+}
+
+/* Light-theme readability for status tints */
+  :root[data-theme="light"] .text-red-200,:root[data-theme="light"] .text-red-300,:root[data-theme="light"] .text-red-400{color:rgb(185 28 28)}
+  :root[data-theme="light"] .text-green-100,:root[data-theme="light"] .text-green-300,:root[data-theme="light"] .text-green-400{color:rgb(21 128 61)}
+  :root[data-theme="light"] .text-yellow-300,:root[data-theme="light"] .text-yellow-400{color:rgb(161 98 7)}
+  :root[data-theme="light"] .text-blue-300,:root[data-theme="light"] .text-blue-400{color:rgb(29 78 216)}
+  :root[data-theme="light"] .bg-red-900\/30,:root[data-theme="light"] .bg-red-900\/40{background-color:rgb(254 226 226)}
+  :root[data-theme="light"] .bg-green-900\/30,:root[data-theme="light"] .bg-green-900\/40{background-color:rgb(220 252 231)}
+  :root[data-theme="light"] .bg-yellow-900\/30,:root[data-theme="light"] .bg-yellow-900\/40{background-color:rgb(254 249 195)}
+  :root[data-theme="light"] .bg-blue-900\/40{background-color:rgb(219 234 254)}
+  :root[data-theme="light"] .border-red-700{border-color:rgb(252 165 165)}
+  :root[data-theme="light"] .border-green-700,:root[data-theme="light"] .border-green-700\/60{border-color:rgb(134 239 172)}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] .text-red-200,:root[data-theme="system"] .text-red-300,:root[data-theme="system"] .text-red-400{color:rgb(185 28 28)}
+    :root[data-theme="system"] .text-green-100,:root[data-theme="system"] .text-green-300,:root[data-theme="system"] .text-green-400{color:rgb(21 128 61)}
+    :root[data-theme="system"] .text-yellow-300,:root[data-theme="system"] .text-yellow-400{color:rgb(161 98 7)}
+    :root[data-theme="system"] .text-blue-300,:root[data-theme="system"] .text-blue-400{color:rgb(29 78 216)}
+    :root[data-theme="system"] .bg-red-900\/30,:root[data-theme="system"] .bg-red-900\/40{background-color:rgb(254 226 226)}
+    :root[data-theme="system"] .bg-green-900\/30,:root[data-theme="system"] .bg-green-900\/40{background-color:rgb(220 252 231)}
+    :root[data-theme="system"] .bg-yellow-900\/30,:root[data-theme="system"] .bg-yellow-900\/40{background-color:rgb(254 249 195)}
+    :root[data-theme="system"] .bg-blue-900\/40{background-color:rgb(219 234 254)}
+    :root[data-theme="system"] .border-red-700{border-color:rgb(252 165 165)}
+    :root[data-theme="system"] .border-green-700,:root[data-theme="system"] .border-green-700\/60{border-color:rgb(134 239 172)}
 }

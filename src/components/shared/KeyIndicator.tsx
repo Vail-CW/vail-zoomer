@@ -24,12 +24,12 @@ export function KeyIndicator({
       className={`${dim} ${border} rounded-full transition-all duration-75 flex items-center justify-center shrink-0 ${
         isKeyDown
           ? "bg-amber-500 border-amber-400 shadow-md shadow-amber-500/40"
-          : "bg-gray-700 border-gray-600"
+          : "bg-surface2 border-line"
       }`}
     >
       <span
         className={`${glyph} font-bold leading-none ${
-          isKeyDown ? "text-gray-900" : "text-gray-500"
+          isKeyDown ? "text-gray-900" : "text-muted"
         }`}
       >
         {isKeyDown ? "●" : "○"}
@@ -46,7 +46,7 @@ export function KeyIndicator({
             {label && (
               <span
                 className={`text-base font-medium ${
-                  isKeyDown ? "text-amber-400" : "text-gray-300"
+                  isKeyDown ? "text-accent-text" : "text-muted"
                 }`}
               >
                 {label}
@@ -55,7 +55,7 @@ export function KeyIndicator({
             {hint && (
               <span
                 className={`text-sm transition-opacity ${
-                  isKeyDown ? "opacity-0 text-gray-400" : "text-gray-400"
+                  isKeyDown ? "opacity-0 text-muted" : "text-muted"
                 }`}
                 aria-hidden={isKeyDown ? "true" : undefined}
               >
@@ -74,13 +74,13 @@ export function KeyIndicator({
       {label && (
         <p
           className={`text-base font-medium ${
-            isKeyDown ? "text-amber-400" : "text-gray-300"
+            isKeyDown ? "text-accent-text" : "text-muted"
           }`}
         >
           {label}
         </p>
       )}
-      {hint && !isKeyDown && <p className="text-sm text-gray-400">{hint}</p>}
+      {hint && !isKeyDown && <p className="text-sm text-muted">{hint}</p>}
     </div>
   );
 }

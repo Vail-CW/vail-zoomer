@@ -233,6 +233,7 @@ impl CwDecoder {
     }
 
     /// Reset the decoder state
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.current_pattern.clear();
         self.output_buffer.clear();
@@ -245,6 +246,7 @@ impl CwDecoder {
     }
 
     /// Get current dit length estimate
+    #[allow(dead_code)]
     pub fn dit_length_ms(&self) -> f32 {
         self.dit_length_ms
     }

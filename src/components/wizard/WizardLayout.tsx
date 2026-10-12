@@ -30,17 +30,17 @@ export function WizardLayout({
   showBack = true,
 }: WizardLayoutProps) {
   return (
-    <div className="h-screen text-white p-5 flex flex-col">
+    <div className="h-screen text-ink p-5 flex flex-col">
       {/* Header */}
       <header className="flex items-center justify-center gap-3 mb-2 flex-shrink-0">
         <AppIcon size={36} />
-        <h1 className="text-2xl font-bold text-amber-400">Vail Zoomer</h1>
+        <h1 className="text-2xl font-bold text-accent-text">Vail Zoomer</h1>
       </header>
 
       {/* Persistent headphones reminder — runs the length of the wizard so
           new users see it before they ever press a key. */}
       <div className="flex items-center gap-2 px-3 py-1.5 mb-2 bg-amber-500/10 border border-amber-500/30 rounded-lg flex-shrink-0">
-        <svg className="w-4 h-4 text-amber-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4 text-accent-text shrink-0" fill="currentColor" viewBox="0 0 24 24">
           <path d="M12 3a9 9 0 00-9 9v7a2 2 0 002 2h3v-8H5v-1a7 7 0 0114 0v1h-3v8h3a2 2 0 002-2v-7a9 9 0 00-9-9z" />
         </svg>
         <span className="text-sm text-amber-100">
@@ -60,7 +60,7 @@ export function WizardLayout({
         </div>
 
         {/* Step title */}
-        <h2 className="text-2xl font-bold text-white text-center mb-4 flex-shrink-0">{title}</h2>
+        <h2 className="text-2xl font-bold text-ink text-center mb-4 flex-shrink-0">{title}</h2>
 
         {/* Content area */}
         <div className="flex-1">{children}</div>

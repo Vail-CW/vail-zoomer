@@ -34,7 +34,7 @@ export function BigSelect({
   return (
     <div className={className}>
       {label && (
-        <label className="block text-lg text-gray-300 mb-2 font-medium">
+        <label className="block text-lg text-muted mb-2 font-medium">
           {label}
         </label>
       )}
@@ -43,7 +43,7 @@ export function BigSelect({
         onChange={(e) => onChange(e.target.value)}
         onMouseDown={onOpen}
         onFocus={onOpen}
-        className="w-full bg-gray-700 text-white text-lg px-4 py-3 rounded-xl border-2 border-gray-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+        className="w-full bg-surface2 text-ink text-lg px-4 py-3 rounded-xl border-2 border-line focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
       >
         {!hidePlaceholder && <option value="">{placeholder}</option>}
         {options.map((option) => (
