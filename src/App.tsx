@@ -87,6 +87,8 @@ type AppMode = "wizard" | "main" | "video-tips";
 const WIZARD_VERSION = "v3";
 const WIZARD_COMPLETE_KEY = `vail-zoomer-wizard-complete-${WIZARD_VERSION}`;
 
+const MIN_WINDOW = { w: 680, h: 600 };
+
 function App() {
   // App mode state
   const [appMode, setAppMode] = useState<AppMode>("wizard");
@@ -193,6 +195,28 @@ function App() {
     const scale = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
     document.documentElement.style.fontSize = `${14 * scale}px`;
   }, [settings.ui_scale]);
+
+  // Keep the fixed (non-scrolling) layout fitting: grow the window minimum
+  // proportionally with the UI scale. Skipped in mini mode (own fixed layout).
+  useEffect(() => {
+    if (compact) return;
+    const scale = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
+    const minW = Math.round(MIN_WINDOW.w * scale);
+    const minH = Math.round(MIN_WINDOW.h * scale);
+    (async () => {
+      try {
+        const win = getCurrentWindow();
+        await win.setMinSize(new LogicalSize(minW, minH));
+        const [size, factor] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+        const logical = size.toLogical(factor);
+        if (logical.width < minW || logical.height < minH) {
+          await win.setSize(new LogicalSize(Math.max(logical.width, minW), Math.max(logical.height, minH)));
+        }
+      } catch {
+        /* not running inside Tauri */
+      }
+    })();
+  }, [settings.ui_scale, compact]);
 
 
   // Ref to track the user's saved mic volume (for restoring after wizard mute)
@@ -589,8 +613,9 @@ function App() {
         await win.setMinSize(new LogicalSize(360, 200));
         await win.setSize(new LogicalSize(420, 260));
       } else {
-        const prev = savedWindowSizeRef.current ?? { w: 760, h: 720 };
-        await win.setMinSize(new LogicalSize(640, 560));
+        const prev = savedWindowSizeRef.current ?? { w: 800, h: 640 };
+        const sc = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
+        await win.setMinSize(new LogicalSize(Math.round(MIN_WINDOW.w * sc), Math.round(MIN_WINDOW.h * sc)));
         await win.setSize(new LogicalSize(prev.w, prev.h));
         await win.setAlwaysOnTop(false);
       }

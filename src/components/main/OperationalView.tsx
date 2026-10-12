@@ -3,16 +3,13 @@ import { AppIcon } from "../shared/AppIcon";
 import { Button } from "../shared/Button";
 import { IconButton } from "../shared/IconButton";
 import { Card } from "../shared/Card";
-import { Row, RowGroup } from "../shared/Field";
 import { Switch } from "../shared/Switch";
 import { Select } from "../shared/Select";
 import { Stepper } from "../shared/Stepper";
 import { Meter } from "../shared/Meter";
 import { KeyLamp } from "../shared/KeyLamp";
-import { Callout } from "../shared/Callout";
 import { StatusChip, Tone } from "../shared/StatusDot";
 import {
-  ArrowRightIcon,
   ChevronRightIcon,
   HeadphonesIcon,
   HelpIcon,
@@ -27,6 +24,7 @@ import {
   VideoIcon,
   VolumeIcon,
   WrenchIcon,
+  XIcon,
 } from "../shared/icons";
 import { OSType, VirtualOutputRow, friendlyMidiName } from "../audio";
 import { KEYER_TYPES } from "../audio/keyerTypes";
@@ -113,7 +111,7 @@ interface OperationalViewProps {
 
 function Node({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return (
-    <div className="min-w-0 space-y-2 rounded border border-line bg-surface2/40 p-2.5">
+    <div className="min-w-0 space-y-1 rounded border border-line bg-surface2/40 p-2">
       <div className="flex items-center gap-1.5 text-sm text-muted">
         {icon}
         <span className="truncate">{label}</span>
@@ -217,7 +215,7 @@ export function OperationalView({
 
   if (compact) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 text-ink">
+      <div className="flex h-full min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3 text-ink">
         <header className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <KeyLamp down={isKeyDown} size={14} />
@@ -241,9 +239,9 @@ export function OperationalView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col text-ink">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden text-ink">
       {/* Top bar */}
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
         <div className="flex shrink-0 items-center gap-2">
           <AppIcon size={20} />
           <h1 className="text-lg font-semibold">Vail Zoomer</h1>
@@ -295,158 +293,164 @@ export function OperationalView({
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 p-4">
-          {practiceMode && (
-            <Callout tone="warn">Practice mode is on. Nothing is sent to your video app.</Callout>
-          )}
-          {!hintDismissed && (
-            <Callout
-              tone="info"
-              icon={<HeadphonesIcon />}
-              onDismiss={dismissHint}
-              action={
-                <Button variant="ghost" onClick={onOpenTroubleshoot} className="-my-1 h-7">
-                  Why?
-                </Button>
-              }
-            >
-              Wear headphones so your mic does not pick up the tone.
-            </Callout>
-          )}
-
-          <VirtualOutputRow outputDevices={outputDevices} currentOS={currentOS} onSetup={onSetupOutput} />
-
-          {/* Signal flow: mic -> key -> video app */}
-          <Card title="Signal">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-              <Node icon={<MicIcon />} label="Your mic">
-                <Meter level={micLevel} label="Your mic" />
-              </Node>
-              <ChevronRightIcon className="text-faint" />
-              <Node icon={<RadioIcon />} label="Vail Adapter">
-                <div className="flex items-center gap-2">
-                  <KeyLamp down={isKeyDown} size={14} />
-                  <span className={`w-14 text-sm ${isKeyDown ? "text-accent-text" : "text-muted"}`}>
-                    {isKeyDown ? "Keying" : "Idle"}
-                  </span>
-                </div>
-              </Node>
-              <ChevronRightIcon className="text-faint" />
-              <Node icon={<VideoIcon />} label={practiceMode ? "Video app (muted)" : "Video app"}>
-                <Meter level={outputLevel} label="Video app" />
-              </Node>
-            </div>
-
-            <div className="mt-3">
-              <KeyingTrace isKeyDown={isKeyDown} />
-            </div>
-
-            <div className="mt-3 flex h-8 items-center justify-between gap-3 border-t border-line pt-3 box-content">
-              <span className="min-w-0 truncate text-sm text-muted">Record 5 s and hear what your video app hears.</span>
-              <div className="flex shrink-0 items-center justify-end gap-2">
-                {testRecordingState === "idle" && (
-                  <Button
-                    onClick={onStartTestRecording}
-                    disabled={!audioStarted}
-                    icon={<RecordIcon className="text-danger" />}
-                  >
-                    Test recording
-                  </Button>
-                )}
-                {testRecordingState === "recording" && (
-                  <>
-                    <StatusChip tone="danger" icon={<RecordIcon size={12} />} className="w-28 justify-center">
-                      Recording {testRecordingCountdown}s
-                    </StatusChip>
-                    <Button onClick={onStopTestRecording} icon={<StopIcon />}>
-                      Stop
-                    </Button>
-                  </>
-                )}
-                {testRecordingState === "playing" && (
-                  <>
-                    <PlayIcon className="text-success-fg" />
-                    <div className="h-1 w-24 overflow-hidden rounded-full bg-surface3">
-                      <div className="h-full bg-success" style={{ width: `${testPlaybackProgress * 100}%` }} />
-                    </div>
-                    <Button onClick={onStopTestPlayback} icon={<StopIcon />}>
-                      Stop
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          {/* Quick controls */}
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 rounded-md border border-line bg-surface px-3 py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-sm text-muted">Key</span>
-              <Select
-                aria-label="Key type"
-                className="min-w-0 flex-1"
-                value={keyerType}
-                onChange={onKeyerTypeChange}
-                options={KEYER_TYPES}
-                hidePlaceholder
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted">Speed</span>
-              <Stepper
-                value={`${wpm} WPM`}
-                valueWidth="w-20"
-                decreaseLabel="Decrease speed"
-                increaseLabel="Increase speed"
-                onDecrease={() => onWpmChange(Math.max(5, wpm - 1))}
-                onIncrease={() => onWpmChange(Math.min(50, wpm + 1))}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted">Tone</span>
-              <Stepper
-                value={`${sidetoneFrequency} Hz`}
-                valueWidth="w-20"
-                decreaseLabel="Lower tone"
-                increaseLabel="Raise tone"
-                onDecrease={() => changeTone(Math.max(300, sidetoneFrequency - 25))}
-                onIncrease={() => changeTone(Math.min(1200, sidetoneFrequency + 25))}
-              />
-            </div>
+      <main className="flex min-h-0 flex-1 flex-col gap-2 p-2.5">
+        {practiceMode && (
+          <div className="flex h-7 shrink-0 items-center gap-2 rounded-md border border-warn/30 bg-warn/10 px-2.5 text-sm text-warn-fg">
+            Practice mode is on. Nothing is sent to your video app.
           </div>
+        )}
+        {!hintDismissed && (
+          <div
+            role="status"
+            className="flex h-7 shrink-0 items-center gap-2 rounded-md border border-info/30 bg-info/10 pl-2.5 pr-1 text-sm text-ink"
+          >
+            <HeadphonesIcon className="shrink-0 text-info-fg" />
+            <span className="min-w-0 flex-1 truncate">Wear headphones so your mic does not pick up the tone.</span>
+            <button type="button" onClick={onOpenTroubleshoot} className="shrink-0 text-info-fg hover:underline">
+              Why?
+            </button>
+            <IconButton aria-label="Dismiss" onClick={dismissHint} className="h-6 w-6">
+              <XIcon />
+            </IconButton>
+          </div>
+        )}
 
-          {/* Options */}
-          <Card title="Options" padded={false}>
-            <RowGroup>
-              <Row
-                label="Auto-mute mic while sending"
-                help="Silences your mic while you key, so the tone cannot loop back."
-              >
-                <Switch checked={micDucking} onChange={onMicDuckingChange} aria-label="Auto-mute mic while sending" />
-              </Row>
-              {onPracticeModeChange && (
-                <Row
-                  label="Practice mode"
-                  help="Tone plays in your headphones only. Nothing goes to the video app."
+        <VirtualOutputRow outputDevices={outputDevices} currentOS={currentOS} onSetup={onSetupOutput} className="shrink-0" />
+
+        {/* Signal flow: mic -> key -> video app */}
+        <Card
+          title="Signal"
+          className="shrink-0 !p-2.5"
+          action={
+            <div className="flex shrink-0 items-center gap-2">
+              {testRecordingState === "idle" && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onStartTestRecording}
+                  disabled={!audioStarted}
+                  className="!h-7"
+                  title="Record 5 s and hear what your video app hears"
+                  icon={<RecordIcon className="text-danger" />}
                 >
-                  <Switch checked={practiceMode} onChange={onPracticeModeChange} aria-label="Practice mode" />
-                </Row>
+                  Test recording
+                </Button>
               )}
-            </RowGroup>
-          </Card>
+              {testRecordingState === "recording" && (
+                <>
+                  <StatusChip tone="danger" icon={<RecordIcon size={12} />}>
+                    Recording {testRecordingCountdown}s
+                  </StatusChip>
+                  <Button size="sm" variant="secondary" className="!h-7" onClick={onStopTestRecording} icon={<StopIcon />}>
+                    Stop
+                  </Button>
+                </>
+              )}
+              {testRecordingState === "playing" && (
+                <>
+                  <PlayIcon className="text-success-fg" />
+                  <div className="h-1 w-20 overflow-hidden rounded-full bg-surface3">
+                    <div className="h-full bg-success" style={{ width: `${testPlaybackProgress * 100}%` }} />
+                  </div>
+                  <Button size="sm" variant="secondary" className="!h-7" onClick={onStopTestPlayback} icon={<StopIcon />}>
+                    Stop
+                  </Button>
+                </>
+              )}
+            </div>
+          }
+        >
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+            <Node icon={<MicIcon />} label="Your mic">
+              <Meter level={micLevel} label="Your mic" />
+            </Node>
+            <ChevronRightIcon className="text-faint" />
+            <Node icon={<RadioIcon />} label="Vail Adapter">
+              <div className="flex items-center gap-2">
+                <KeyLamp down={isKeyDown} size={14} />
+                <span className={`w-14 text-sm ${isKeyDown ? "text-accent-text" : "text-muted"}`}>
+                  {isKeyDown ? "Keying" : "Idle"}
+                </span>
+              </div>
+            </Node>
+            <ChevronRightIcon className="text-faint" />
+            <Node icon={<VideoIcon />} label={practiceMode ? "Video app (muted)" : "Video app"}>
+              <Meter level={outputLevel} label="Video app" />
+            </Node>
+          </div>
+        </Card>
 
-          <DecoderPanel
-            cwText={cwText}
-            onClear={onClearCwText}
-            currentElements={currentElements}
-            estimatedWpm={estimatedWpm}
-          />
+        <div className="shrink-0">
+          <KeyingTrace isKeyDown={isKeyDown} />
+        </div>
 
-          <Button variant="secondary" fullWidth icon={<VideoIcon />} iconRight={<ArrowRightIcon />} onClick={onOpenVideoTips}>
+        {/* Quick controls */}
+        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 rounded-md border border-line bg-surface px-2.5 py-1.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-sm text-muted">Key</span>
+            <Select
+              aria-label="Key type"
+              className="min-w-0 flex-1"
+              value={keyerType}
+              onChange={onKeyerTypeChange}
+              options={KEYER_TYPES}
+              hidePlaceholder
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted">Speed</span>
+            <Stepper
+              value={`${wpm} WPM`}
+              valueWidth="w-20"
+              decreaseLabel="Decrease speed"
+              increaseLabel="Increase speed"
+              onDecrease={() => onWpmChange(Math.max(5, wpm - 1))}
+              onIncrease={() => onWpmChange(Math.min(50, wpm + 1))}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted">Tone</span>
+            <Stepper
+              value={`${sidetoneFrequency} Hz`}
+              valueWidth="w-20"
+              decreaseLabel="Lower tone"
+              increaseLabel="Raise tone"
+              onDecrease={() => changeTone(Math.max(300, sidetoneFrequency - 25))}
+              onIncrease={() => changeTone(Math.min(1200, sidetoneFrequency + 25))}
+            />
+          </div>
+        </div>
+
+        {/* Options: one compact row */}
+        <div className="flex h-9 shrink-0 items-center gap-4 rounded-md border border-line bg-surface px-2.5">
+          <label
+            className="flex min-w-0 flex-1 items-center justify-between gap-2 text-base"
+            title="Silences your mic while you key, so the tone cannot loop back."
+          >
+            <span className="truncate">Auto-mute mic</span>
+            <Switch checked={micDucking} onChange={onMicDuckingChange} aria-label="Auto-mute mic while sending" />
+          </label>
+          {onPracticeModeChange && (
+            <label
+              className="flex min-w-0 flex-1 items-center justify-between gap-2 text-base"
+              title="Tone plays in your headphones only. Nothing goes to the video app."
+            >
+              <span className="truncate">Practice mode</span>
+              <Switch checked={practiceMode} onChange={onPracticeModeChange} aria-label="Practice mode" />
+            </label>
+          )}
+          <Button size="sm" variant="secondary" icon={<VideoIcon />} onClick={onOpenVideoTips} className="shrink-0">
             Video app setup
           </Button>
         </div>
+
+        <DecoderPanel
+          cwText={cwText}
+          onClear={onClearCwText}
+          currentElements={currentElements}
+          estimatedWpm={estimatedWpm}
+          fill
+        />
       </main>
     </div>
   );

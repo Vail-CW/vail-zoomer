@@ -12,6 +12,8 @@ interface DecoderPanelProps {
   estimatedWpm?: number;
   /** Single-line view of the last ~40 characters, no card chrome (mini mode) */
   singleLine?: boolean;
+  /** Fill remaining height of a flex column; the text area scrolls internally. */
+  fill?: boolean;
 }
 
 export function DecoderPanel({
@@ -20,6 +22,7 @@ export function DecoderPanel({
   currentElements,
   estimatedWpm = 0,
   singleLine = false,
+  fill = false,
 }: DecoderPanelProps) {
   const [copied, setCopied] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -69,6 +72,7 @@ export function DecoderPanel({
 
   return (
     <Card
+      className={fill ? "flex min-h-[3.75rem] flex-1 flex-col !p-2.5" : ""}
       title="Decoded"
       action={
         <div className="flex items-center gap-1">
@@ -93,7 +97,7 @@ export function DecoderPanel({
       <div
         ref={boxRef}
         onScroll={onScroll}
-        className="h-24 overflow-y-auto whitespace-pre-wrap break-words rounded border border-line bg-app p-2.5 font-mono text-2xl"
+        className={`${fill ? "min-h-0 flex-1" : "h-24"} select-text overflow-y-auto whitespace-pre-wrap break-words rounded border border-line bg-app p-2.5 font-mono text-2xl`}
         role="log"
         aria-label="Decoded morse text"
       >

@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Vail Zoomer",
-        "width": 760,
-        "height": 720,
-        "minWidth": 640,
-        "minHeight": 560,
+        "width": 800,
+        "height": 640,
+        "minWidth": 680,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false
       }

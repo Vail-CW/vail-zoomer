@@ -135,13 +135,17 @@ html,
 body,
 #root {
   height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 0;
   background-color: rgb(var(--bg));
-  overflow: hidden;
+  overscroll-behavior: none;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #root {
@@ -149,19 +153,57 @@ body {
   flex-direction: column;
 }
 
+/* Native feel: chrome is not selectable; text inputs and decoded text are. */
+input,
+textarea,
+select,
+[contenteditable],
+.select-text {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+select,
+input[type="range"],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: default;
+}
+button,
+[role="button"],
+[role="switch"] {
+  cursor: default;
+}
+img,
+svg {
+  -webkit-user-drag: none;
+}
+
+/* Thin overlay scrollbars, visible only while hovering the scroller. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(var(--border) / 0.2) transparent;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: rgb(var(--border) / 0.25) transparent;
 }
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgb(var(--border) / 0.2);
+  background: transparent;
   border-radius: 9999px;
-  border: 3px solid transparent;
-  background-clip: content-box;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: rgb(var(--border) / 0.25);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--border) / 0.4);
 }
 
 ::selection {

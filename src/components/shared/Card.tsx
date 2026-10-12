@@ -33,7 +33,7 @@ export function Card({ title, description, action, children, className = "", pad
   return (
     <section className={`rounded-md border border-line bg-surface ${padded ? "p-3" : ""} ${className}`}>
       {(title || action) && (
-        <div className={padded ? "mb-2" : "px-3 pb-1 pt-3"}>
+        <div className={padded ? "mb-1.5" : "px-3 pb-1 pt-3"}>
           <SectionHeader action={action}>{title}</SectionHeader>
           {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
         </div>
