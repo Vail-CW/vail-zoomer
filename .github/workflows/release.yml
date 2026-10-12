@@ -156,7 +156,7 @@ jobs:
           # Windows zip
           if [ -d "artifacts/windows-x64" ]; then
             mkdir -p temp-windows
-            find artifacts/windows-x64 -type f \( -name "*.exe" -o -name "*.msi" \) -exec cp {} temp-windows/ \;
+            find artifacts/windows-x64 -type f -name "*.exe" -exec cp {} temp-windows/ \;
             if [ "$(ls -A temp-windows 2>/dev/null)" ]; then
               cd temp-windows
               zip -j "../release-assets/Vail.Zoomer-${VERSION}-windows-x64.zip" *
@@ -170,7 +170,7 @@ jobs:
           # macOS x64 zip
           if [ -d "artifacts/macos-x64" ]; then
             mkdir -p temp-macos-x64
-            find artifacts/macos-x64 -type f \( -name "*.dmg" -o -name "*.app.tar.gz" \) ! -name "*.sig" -exec cp {} temp-macos-x64/ \;
+            find artifacts/macos-x64 -type f -name "*.dmg" -exec cp {} temp-macos-x64/ \;
             if [ "$(ls -A temp-macos-x64 2>/dev/null)" ]; then
               cd temp-macos-x64
               zip -j "../release-assets/Vail.Zoomer-${VERSION}-macos-x64.zip" *
@@ -184,7 +184,7 @@ jobs:
           # macOS arm64 zip
           if [ -d "artifacts/macos-arm64" ]; then
             mkdir -p temp-macos-arm64
-            find artifacts/macos-arm64 -type f \( -name "*.dmg" -o -name "*.app.tar.gz" \) ! -name "*.sig" -exec cp {} temp-macos-arm64/ \;
+            find artifacts/macos-arm64 -type f -name "*.dmg" -exec cp {} temp-macos-arm64/ \;
             if [ "$(ls -A temp-macos-arm64 2>/dev/null)" ]; then
               cd temp-macos-arm64
               zip -j "../release-assets/Vail.Zoomer-${VERSION}-macos-arm64.zip" *
@@ -198,7 +198,7 @@ jobs:
           # Linux zip
           if [ -d "artifacts/linux-x64" ]; then
             mkdir -p temp-linux
-            find artifacts/linux-x64 -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) ! -name "*.sig" -exec cp {} temp-linux/ \;
+            find artifacts/linux-x64 -type f \( -name "*.deb" -o -name "*.AppImage" \) -exec cp {} temp-linux/ \;
             if [ "$(ls -A temp-linux 2>/dev/null)" ]; then
               cd temp-linux
               zip -j "../release-assets/Vail.Zoomer-${VERSION}-linux-x64.zip" *
@@ -272,28 +272,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
+          prerelease: true
           name: 'Vail Zoomer ${{ steps.version.outputs.version }}'
           body: |
             ## Installation
 
-            Download the zip file for your operating system and extract it.
+            Download the zip for your operating system and extract it. Each one now has a single installer.
 
             ### Windows
-            Extract and run `Vail.Zoomer_*_x64-setup.exe` or install via the `.msi` file.
+            Extract and run `Vail.Zoomer_*_x64-setup.exe`. It installs for all users into Program Files, so Windows will ask for permission once.
 
             ### macOS
-            Extract and open the `.dmg` file. Drag Vail Zoomer to your Applications folder.
-            - **Apple Silicon (M1/M2/M3)**: Use the `macos-arm64` zip
-            - **Intel**: Use the `macos-x64` zip
+            Extract and open the `.dmg`, then drag Vail Zoomer to your Applications folder.
+            - **Apple Silicon (M1/M2/M3)**: use the `macos-arm64` zip
+            - **Intel**: use the `macos-x64` zip
 
             ### Linux
-            Extract and use the `.AppImage`, `.deb`, or `.rpm` package for your system.
+            Extract and use the `.AppImage` to run it anywhere, or the `.deb` on Ubuntu and Debian.
 
             ---
 
-            **Note:** These builds are not code-signed. See the README for instructions on bypassing security warnings.
+            **Heads up:** this is a prerelease for testing. These builds are not code-signed, so see the README for how to get past the security warnings.
 
-            **First time setup?** See the [README](https://github.com/${{ github.repository }}#readme) for virtual audio device installation instructions.
+            **First time setup?** See the [README](https://github.com/${{ github.repository }}#readme) for virtual audio setup.
           files: |
             release-assets/*.zip
             release-assets/latest.json

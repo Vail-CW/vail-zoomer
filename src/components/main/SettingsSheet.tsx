@@ -61,6 +61,7 @@ interface SettingsSheetProps {
   micVolume: number;
   micDucking: boolean;
   sidetoneRoute: string;
+  uiScale: number;
 
   // Handlers
   onSelectMidiDevice: (device: string) => void;
@@ -74,6 +75,7 @@ interface SettingsSheetProps {
   onSidetoneVolumeChange: (vol: number) => void;
   onMicVolumeChange: (vol: number) => void;
   onMicDuckingChange: (enabled: boolean) => void;
+  onUiScaleChange: (scale: number) => void;
   onRefreshDevices: () => void;
   onRefreshMidiDevices: () => void;
   onPreviewTone: (hz: number) => void;
@@ -105,6 +107,7 @@ export function SettingsSheet({
   micVolume,
   micDucking,
   sidetoneRoute,
+  uiScale,
   onSelectMidiDevice,
   onInputDeviceChange,
   onOutputDeviceChange,
@@ -116,6 +119,7 @@ export function SettingsSheet({
   onSidetoneVolumeChange,
   onMicVolumeChange,
   onMicDuckingChange,
+  onUiScaleChange,
   onRefreshDevices,
   onRefreshMidiDevices,
   onPreviewTone,
@@ -497,6 +501,45 @@ export function SettingsSheet({
               Low = less delay, may crackle on slow machines; Safe = never crackles, more
               delay. Takes effect next time audio starts.
             </p>
+          </Card>
+
+          {/* Display */}
+          <Card>
+            <h3 className="text-xl font-bold text-accent-text mb-3">Display</h3>
+            <div className="space-y-2">
+              <label className="block text-lg text-ink font-medium">
+                Text &amp; button size
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "Normal", value: 1.0 },
+                  { label: "Large", value: 1.15 },
+                  { label: "Largest", value: 1.3 },
+                ].map((opt) => {
+                  const active = Math.abs(uiScale - opt.value) < 0.01;
+                  return (
+                    <button
+                      key={opt.label}
+                      onClick={() => onUiScaleChange(opt.value)}
+                      className={`p-3 text-center rounded-xl border-2 transition-colors min-h-[64px] ${
+                        active
+                          ? "bg-amber-500/15 border-amber-400"
+                          : "bg-surface2 border-line hover:border-muted"
+                      }`}
+                      aria-pressed={active}
+                    >
+                      <div className="text-base font-medium">{opt.label}</div>
+                      <div className="text-sm text-muted mt-1">
+                        {Math.round(opt.value * 100)}%
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-sm text-muted">
+                Makes the app's text and controls bigger. Changes apply right away.
+              </p>
+            </div>
           </Card>
 
           {/* Re-run setup */}

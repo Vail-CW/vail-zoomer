@@ -10,7 +10,7 @@ export function SidetoneRouteButtons({
   route,
   onChange,
   showAdapterMuteHint = false,
-  label = "Where do you want to hear the morse tones?",
+  label = "Where do you want to hear your sidetone?",
 }: SidetoneRouteButtonsProps) {
   return (
     <div className="space-y-2">

@@ -48,7 +48,11 @@ impl PortLister {
     }
 
     pub fn list(&mut self) -> Vec<String> {
-        if self.client.is_none() {
+        // Windows (WinMM) / Linux (ALSA): a long-lived MidiInput never sees a
+        // port plugged in after it was created, so re-enumerate with a fresh
+        // client each call. macOS is the opposite: recreating CoreMIDI clients
+        // every cycle makes it stop reporting hot-plugs, so keep one alive.
+        if cfg!(not(target_os = "macos")) || self.client.is_none() {
             self.client = MidiInput::new("Vail Zoomer List").ok();
         }
         match self.client {
