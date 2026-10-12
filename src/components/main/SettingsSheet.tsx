@@ -1,44 +1,25 @@
-import { useRef, useState } from "react";
-import { BigSelect } from "../shared/BigSelect";
+import { useEffect, useRef, useState } from "react";
+import { Sheet } from "../shared/Modal";
 import { Card } from "../shared/Card";
-import { useModalA11y } from "../../hooks/useModalA11y";
+import { Row, RowGroup } from "../shared/Field";
+import { Select } from "../shared/Select";
+import { Slider } from "../shared/Slider";
+import { Switch } from "../shared/Switch";
+import { SegmentedControl } from "../shared/SegmentedControl";
+import { Button } from "../shared/Button";
+import { IconButton } from "../shared/IconButton";
+import { StatusChip } from "../shared/StatusDot";
+import { RefreshIcon } from "../shared/icons";
 import {
   MicSection,
   SidetoneRouteButtons,
   LocalOutputPicker,
-  VirtualOutputStatusLine,
-  isRecommendedVirtualOutput,
-  getVirtualOutputStatus,
+  VirtualOutputRow,
+  isVailMidiDevice,
   DeviceInfo,
   OSType,
 } from "../audio";
-
-const KEYER_TYPES = [
-  { value: "Straight", label: "Straight Key", description: "One paddle, you control all timing" },
-  { value: "Bug", label: "Bug (auto dits)", description: "Automatic dits, manual dahs" },
-  { value: "ElBug", label: "Electric Bug", description: "Like a bug with electronic timing" },
-  { value: "SingleDot", label: "Single Dot Paddle", description: "One dit per squeeze" },
-  { value: "Ultimatic", label: "Ultimatic Paddle", description: "Last paddle pressed wins" },
-  { value: "PlainIambic", label: "Plain Iambic", description: "Alternating dits and dahs" },
-  { value: "IambicA", label: "Iambic A", description: "Stops after completing element" },
-  { value: "IambicB", label: "Iambic B", description: "Adds opposite element on release" },
-  { value: "Keyahead", label: "Keyahead", description: "Buffers next element while sending" },
-];
-
-import { isVailMidiDevice as matchesVail } from "../audio/audioHelpers";
-
-// Friendly label: collapse Vail adapter hardware names ("Seeeduino XIAO", "QT Py")
-// down to "Vail Adapter", numbering them if more than one is present.
-function makeFriendlyLabeler(devices: string[]) {
-  const vailMatches = devices.filter(matchesVail);
-  const vailIdx = new Map<string, number>();
-  vailMatches.forEach((d, i) => vailIdx.set(d, i + 1));
-  return (device: string) => {
-    if (!matchesVail(device)) return device;
-    if (vailMatches.length <= 1) return "Vail Adapter";
-    return `Vail Adapter ${vailIdx.get(device)}`;
-  };
-}
+import { KEYER_TYPES, makeFriendlyLabeler, splitMidiDevices } from "../audio/keyerTypes";
 
 interface SettingsSheetProps {
   // Devices
@@ -48,7 +29,6 @@ interface SettingsSheetProps {
   inputDevices: DeviceInfo[];
   outputDevices: DeviceInfo[];
   selectedInputDevice: string | null;
-  selectedOutputDevice: string | null;
   selectedLocalDevice: string | null;
   micLevel: number;
   currentOS: OSType;
@@ -61,11 +41,11 @@ interface SettingsSheetProps {
   micVolume: number;
   micDucking: boolean;
   sidetoneRoute: string;
+  uiScale: number;
 
   // Handlers
   onSelectMidiDevice: (device: string) => void;
   onInputDeviceChange: (device: string | null) => void;
-  onOutputDeviceChange: (device: string | null) => void;
   onLocalDeviceChange: (device: string | null) => void;
   onSidetoneRouteChange: (route: string) => void;
   onKeyerTypeChange: (type: string) => void;
@@ -74,10 +54,27 @@ interface SettingsSheetProps {
   onSidetoneVolumeChange: (vol: number) => void;
   onMicVolumeChange: (vol: number) => void;
   onMicDuckingChange: (enabled: boolean) => void;
+  onUiScaleChange: (scale: number) => void;
   onRefreshDevices: () => void;
+  onRefreshMidiDevices: () => void;
+  onPreviewTone: (hz: number) => void;
+  theme: "dark" | "light" | "system";
+  sidetoneRiseMs: number;
+  bufferSizeMode: "Auto" | "Low" | "Safe";
+  onThemeChange: (theme: "dark" | "light" | "system") => void;
+  onSidetoneRiseMsChange: (ms: number) => void;
+  onBufferSizeModeChange: (mode: "Auto" | "Low" | "Safe") => void;
+  /** Opens the install flow for the virtual cable (wizard step 2). */
+  onSetupOutput: () => void;
   onRerunSetup: () => void;
   onClose: () => void;
 }
+
+const UI_SCALES = [
+  { value: 1.0, label: "Normal" },
+  { value: 1.15, label: "Large" },
+  { value: 1.3, label: "Largest" },
+];
 
 export function SettingsSheet({
   midiDevices,
@@ -86,7 +83,6 @@ export function SettingsSheet({
   inputDevices,
   outputDevices,
   selectedInputDevice,
-  selectedOutputDevice,
   selectedLocalDevice,
   micLevel,
   currentOS,
@@ -97,9 +93,9 @@ export function SettingsSheet({
   micVolume,
   micDucking,
   sidetoneRoute,
+  uiScale,
   onSelectMidiDevice,
   onInputDeviceChange,
-  onOutputDeviceChange,
   onLocalDeviceChange,
   onSidetoneRouteChange,
   onKeyerTypeChange,
@@ -108,134 +104,83 @@ export function SettingsSheet({
   onSidetoneVolumeChange,
   onMicVolumeChange,
   onMicDuckingChange,
+  onUiScaleChange,
   onRefreshDevices,
+  onRefreshMidiDevices,
+  onPreviewTone,
+  theme,
+  sidetoneRiseMs,
+  bufferSizeMode,
+  onThemeChange,
+  onSidetoneRiseMsChange,
+  onBufferSizeModeChange,
+  onSetupOutput,
   onRerunSetup,
   onClose,
 }: SettingsSheetProps) {
   const [confirmReset, setConfirmReset] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  useModalA11y(panelRef, onClose);
 
-  // Filter to Vail-family devices first, then everything else (excluding our
-  // own virtual MIDI loopback that some OSes show).
-  const isLoopbackMidi = (d: string) => {
-    const n = d.toLowerCase();
-    return n.includes("vail zoomer output") || n.includes("vailzoomer")
-      || n.includes("midi through");
+  // Refresh the MIDI picker whenever the sheet opens.
+  useEffect(() => {
+    onRefreshMidiDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced audible preview while dragging speed / pitch sliders.
+  const previewTimer = useRef<number | null>(null);
+  const schedulePreview = (hz: number) => {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => onPreviewTone(hz), 250);
   };
-  const vailMidiDevices = midiDevices.filter((d) => matchesVail(d) && !isLoopbackMidi(d));
-  const otherMidiDevices = midiDevices.filter((d) => !matchesVail(d) && !isLoopbackMidi(d));
-  const friendlyDeviceLabel = makeFriendlyLabeler(midiDevices);
-
-  // For the output picker we keep virtual cables visible (that's what should
-  // feed Zoom) and tag the recommended one so the user can spot it at a glance.
-  const outputOptions = outputDevices.map((d) => ({
-    value: d.internal_name,
-    label: isRecommendedVirtualOutput(d, currentOS)
-      ? `${d.display_name}  ✓ recommended for Zoom/Teams`
-      : d.display_name,
-  }));
-
-  const virtualOutputStatus = getVirtualOutputStatus(outputDevices, selectedOutputDevice, currentOS);
-
-  const renderMidiButton = (device: string) => (
-    <button
-      key={device}
-      onClick={() => onSelectMidiDevice(device)}
-      className={`w-full p-3 text-left rounded-xl border-2 transition-colors min-h-[52px] ${
-        selectedMidiDevice === device
-          ? "bg-amber-500/15 border-amber-400 text-white"
-          : "bg-gray-800 border-gray-600 text-gray-200 hover:border-gray-500"
-      }`}
-      aria-pressed={selectedMidiDevice === device}
-    >
-      <div className="flex items-center gap-3">
-        <div
-          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-            selectedMidiDevice === device
-              ? "border-amber-400 bg-amber-500"
-              : "border-gray-500"
-          }`}
-        >
-          {selectedMidiDevice === device && (
-            <div className="w-2 h-2 rounded-full bg-gray-900" />
-          )}
-        </div>
-        <span className="text-base">{friendlyDeviceLabel(device)}</span>
-      </div>
-    </button>
+  useEffect(
+    () => () => {
+      if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    },
+    [],
   );
 
+  const midiLabel = makeFriendlyLabeler(midiDevices, isVailMidiDevice);
+  const { vail, other } = splitMidiDevices(midiDevices, isVailMidiDevice);
+  const midiOptions = [...vail, ...other].map((d) => ({ value: d, label: midiLabel(d) }));
+
+  const scaleValue = UI_SCALES.reduce((best, s) =>
+    Math.abs(s.value - uiScale) < Math.abs(best.value - uiScale) ? s : best,
+  ).value;
+
   return (
-    <div
-      className="fixed inset-0 bg-black/70 flex items-stretch justify-center z-50"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-sheet-title"
-      onClick={onClose}
-    >
-      <div
-        ref={panelRef}
-        className="bg-gray-900 w-full max-w-2xl h-full overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Sticky header */}
-        <div className="sticky top-0 bg-gray-900 border-b border-gray-700 px-5 py-4 flex items-center justify-between z-10">
-          <h2 id="settings-sheet-title" className="text-2xl font-bold text-amber-400">
-            Settings
-          </h2>
-          <button
-            onClick={onClose}
-            className="min-w-[48px] min-h-[48px] px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-lg font-medium"
-            aria-label="Close settings"
-          >
-            Done
-          </button>
-        </div>
-
-        <div className="p-5 space-y-5">
-          {/* Devices */}
-          <Card>
-            <h3 className="text-xl font-bold text-amber-400 mb-3">Devices</h3>
-
-            {/* MIDI keyer */}
-            <div className="space-y-2 mb-5">
-              <div className="flex items-center justify-between">
-                <label className="block text-lg text-gray-200 font-medium">
-                  Vail Adapter (keyer)
-                </label>
-                <span
-                  className={`text-sm font-medium ${
-                    midiConnected ? "text-green-400" : "text-amber-300"
-                  }`}
-                >
-                  {midiConnected ? "Connected" : "Not connected"}
+    <Sheet title="Settings" onClose={onClose}>
+      <div className="space-y-4">
+        {/* Devices */}
+        <Card title="Devices" padded={false}>
+          <RowGroup>
+            <Row
+              label="Vail Adapter"
+              stack
+              htmlFor="midi-select"
+              action={
+                <span className="flex items-center gap-1">
+                  <StatusChip tone={midiConnected ? "success" : "warn"} dot size="xs">
+                    {midiConnected ? "Connected" : "Not connected"}
+                  </StatusChip>
+                  <IconButton aria-label="Rescan MIDI devices" onClick={onRefreshMidiDevices} className="-my-1">
+                    <RefreshIcon />
+                  </IconButton>
                 </span>
-              </div>
-              {midiDevices.length === 0 ? (
-                <p className="text-base text-gray-300">
-                  No MIDI devices found. Plug your Vail Adapter in over USB and it will
-                  appear here automatically.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {vailMidiDevices.map(renderMidiButton)}
-                  {otherMidiDevices.length > 0 && (
-                    <>
-                      {vailMidiDevices.length > 0 && (
-                        <p className="text-sm text-gray-400 pt-1">Other MIDI devices</p>
-                      )}
-                      {otherMidiDevices.map(renderMidiButton)}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+              }
+              help={midiDevices.length === 0 ? "No MIDI devices found. Plug in your adapter over USB." : undefined}
+            >
+              <Select
+                id="midi-select"
+                value={selectedMidiDevice ?? ""}
+                onChange={(v) => v && onSelectMidiDevice(v)}
+                options={midiOptions}
+                placeholder="Choose your adapter"
+              />
+            </Row>
 
-            {/* Microphone */}
-            <div className="mb-5">
+            <div className="py-2">
               <MicSection
-                label="Your microphone"
+                label="Microphone"
                 inputDevices={inputDevices}
                 selectedInputDevice={selectedInputDevice}
                 micLevel={micLevel}
@@ -246,182 +191,176 @@ export function SettingsSheet({
               />
             </div>
 
-            {/* Output to video app */}
-            <div className="space-y-2 mb-5">
-              <label className="block text-lg text-gray-200 font-medium">
-                Output to your video app
-              </label>
-              <BigSelect
-                value={selectedOutputDevice || ""}
-                onChange={(v) => onOutputDeviceChange(v || null)}
-                onOpen={onRefreshDevices}
-                options={outputOptions}
-                placeholder="Choose an output…"
-              />
-              <VirtualOutputStatusLine status={virtualOutputStatus} />
-              {currentOS === "linux" && (
-                <p className="text-sm text-gray-300">
-                  On Linux this is set up automatically. Pick <strong>VailZoomer</strong> if
-                  you need to switch back to it.
-                </p>
+            <div className="py-2">
+              <p className="mb-1.5 text-base text-ink">Output</p>
+              <VirtualOutputRow outputDevices={outputDevices} currentOS={currentOS} onSetup={onSetupOutput} />
+            </div>
+
+            <div className="space-y-3 py-2">
+              <SidetoneRouteButtons route={sidetoneRoute} onChange={onSidetoneRouteChange} />
+              {sidetoneRoute === "Both" && (
+                <LocalOutputPicker
+                  outputDevices={outputDevices}
+                  selectedLocalDevice={selectedLocalDevice}
+                  onLocalDeviceChange={onLocalDeviceChange}
+                  onRefreshDevices={onRefreshDevices}
+                  label="Computer speakers or headphones"
+                />
               )}
             </div>
+          </RowGroup>
+        </Card>
 
-            {/* Sidetone routing */}
-            <div className="mb-5">
-              <SidetoneRouteButtons
-                route={sidetoneRoute}
-                onChange={onSidetoneRouteChange}
-              />
-            </div>
-
-            {/* Local speakers picker */}
-            {sidetoneRoute === "Both" && (
-              <LocalOutputPicker
-                outputDevices={outputDevices}
-                selectedLocalDevice={selectedLocalDevice}
-                onLocalDeviceChange={onLocalDeviceChange}
-                onRefreshDevices={onRefreshDevices}
-                label="Computer speakers / headphones"
-              />
-            )}
-          </Card>
-
-          {/* Keyer settings */}
-          <Card>
-            <h3 className="text-xl font-bold text-amber-400 mb-3">Keyer</h3>
-
-            <div className="space-y-2 mb-5">
-              <label className="block text-lg text-gray-200 font-medium">Key type</label>
-              <BigSelect
+        {/* Keyer */}
+        <Card title="Keyer" padded={false}>
+          <RowGroup>
+            <Row label="Key type" stack htmlFor="keyer-select" help={KEYER_TYPES.find((k) => k.value === keyerType)?.description}>
+              <Select
+                id="keyer-select"
                 value={keyerType}
                 onChange={onKeyerTypeChange}
                 options={KEYER_TYPES}
-                placeholder="Select key type…"
+                hidePlaceholder
               />
-            </div>
-
+            </Row>
             {keyerType !== "Straight" && (
-              <div className="mb-5">
-                <label className="flex justify-between items-center text-lg text-gray-200 font-medium mb-2">
-                  <span>Speed</span>
-                  <span className="text-amber-400 font-bold">{wpm} WPM</span>
-                </label>
-                <input
-                  type="range"
-                  min="5"
-                  max="50"
+              <Row label="Speed" stack>
+                <Slider
+                  min={5}
+                  max={50}
                   value={wpm}
-                  onChange={(e) => onWpmChange(parseInt(e.target.value))}
-                  className="w-full"
+                  onChange={(v) => {
+                    onWpmChange(v);
+                    schedulePreview(sidetoneFrequency);
+                  }}
                   aria-label="Words per minute"
+                  valueLabel={`${wpm} WPM`}
                 />
-              </div>
+              </Row>
             )}
+          </RowGroup>
+        </Card>
 
-            <div className="mb-5">
-              <label className="flex justify-between items-center text-lg text-gray-200 font-medium mb-2">
-                <span>Tone pitch</span>
-                <span className="text-amber-400 font-bold">{sidetoneFrequency} Hz</span>
-              </label>
-              <input
-                type="range"
-                min="400"
-                max="1000"
-                step="10"
+        {/* Sidetone */}
+        <Card title="Sidetone" padded={false}>
+          <RowGroup>
+            <Row label="Pitch" stack>
+              <Slider
+                min={400}
+                max={1000}
+                step={10}
                 value={sidetoneFrequency}
-                onChange={(e) => onSidetoneFrequencyChange(parseInt(e.target.value))}
-                className="w-full"
+                onChange={(hz) => {
+                  onSidetoneFrequencyChange(hz);
+                  schedulePreview(hz);
+                }}
                 aria-label="Tone pitch"
+                valueLabel={`${sidetoneFrequency} Hz`}
               />
-            </div>
-
-            <div className="mb-5">
-              <label className="flex justify-between items-center text-lg text-gray-200 font-medium mb-2">
-                <span>Tone volume</span>
-                <span className="text-amber-400 font-bold">
-                  {Math.round(sidetoneVolume * 100)}%
-                </span>
-              </label>
-              <input
-                type="range"
-                min="0"
-                max="100"
+            </Row>
+            <Row label="Volume" stack>
+              <Slider
+                min={0}
+                max={100}
                 value={Math.round(sidetoneVolume * 100)}
-                onChange={(e) => onSidetoneVolumeChange(parseInt(e.target.value) / 100)}
-                className="w-full"
+                onChange={(v) => onSidetoneVolumeChange(v / 100)}
                 aria-label="Tone volume"
+                valueLabel={`${Math.round(sidetoneVolume * 100)}%`}
               />
-              <p className="text-sm text-gray-300 mt-1">
-                Wear headphones — prevents your sidetone bouncing back through your mic.
-              </p>
-            </div>
+            </Row>
+            <Row label="Edge softness" stack help="Higher is softer with fewer clicks. Lower is crisper.">
+              <Slider
+                min={1}
+                max={20}
+                value={sidetoneRiseMs}
+                onChange={(ms) => {
+                  onSidetoneRiseMsChange(ms);
+                  schedulePreview(sidetoneFrequency);
+                }}
+                aria-label="Tone edge softness in milliseconds"
+                valueLabel={`${sidetoneRiseMs} ms`}
+              />
+            </Row>
+          </RowGroup>
+        </Card>
 
-            <div className="flex items-center justify-between">
-              <div className="flex-1 pr-3">
-                <span className="text-lg text-gray-200 font-medium">
-                  Auto-mute mic while sending
-                </span>
-                <p className="text-sm text-gray-300">
-                  Mutes your microphone the instant you key down and unmutes it the moment you stop — prevents your sidetone bouncing back as feedback.
-                </p>
-              </div>
-              <button
-                onClick={() => onMicDuckingChange(!micDucking)}
-                className={`relative w-16 h-9 rounded-full transition-colors flex-shrink-0 ${
-                  micDucking ? "bg-amber-500" : "bg-gray-600"
-                }`}
-                aria-label="Mute my voice while keying"
-                aria-pressed={micDucking}
+        {/* Audio */}
+        <Card title="Audio" padded={false}>
+          <RowGroup>
+            <Row label="Auto-mute mic while sending" help="Silences your mic while you key, so the tone cannot loop back.">
+              <Switch checked={micDucking} onChange={onMicDuckingChange} aria-label="Auto-mute mic while sending" />
+            </Row>
+            <Row
+              label="Latency"
+              stack
+              help="Low has less delay but may crackle on slow machines. Safe never crackles. Applies next time audio starts."
+            >
+              <SegmentedControl
+                aria-label="Audio latency"
+                value={bufferSizeMode}
+                onChange={onBufferSizeModeChange}
+                options={[
+                  { value: "Auto", label: "Auto" },
+                  { value: "Low", label: "Low" },
+                  { value: "Safe", label: "Safe" },
+                ]}
+              />
+            </Row>
+          </RowGroup>
+        </Card>
+
+        {/* Display */}
+        <Card title="Display" padded={false}>
+          <RowGroup>
+            <Row label="Theme" stack>
+              <SegmentedControl
+                aria-label="Theme"
+                value={theme}
+                onChange={onThemeChange}
+                options={[
+                  { value: "dark", label: "Dark" },
+                  { value: "light", label: "Light" },
+                  { value: "system", label: "System" },
+                ]}
+              />
+            </Row>
+            <Row label="Text and control size" stack help="Makes the whole interface larger. Applies right away.">
+              <SegmentedControl
+                aria-label="Text and control size"
+                value={scaleValue}
+                onChange={onUiScaleChange}
+                options={UI_SCALES}
+              />
+            </Row>
+          </RowGroup>
+        </Card>
+
+        {/* Setup */}
+        <div className="flex items-center justify-between gap-3 px-1">
+          <div className="min-w-0">
+            <p className="text-base text-ink">First-time setup</p>
+            <p className="text-sm text-muted">Run the four-step wizard again.</p>
+          </div>
+          {confirmReset ? (
+            <div className="flex shrink-0 gap-2">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setConfirmReset(false);
+                  onRerunSetup();
+                }}
               >
-                <span
-                  className={`absolute top-1 w-7 h-7 bg-white rounded-full transition-transform ${
-                    micDucking ? "left-8" : "left-1"
-                  }`}
-                />
-              </button>
+                Confirm
+              </Button>
+              <Button onClick={() => setConfirmReset(false)}>Cancel</Button>
             </div>
-          </Card>
-
-          {/* Re-run setup */}
-          <Card className="!bg-gray-800/50">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex-1">
-                <p className="text-lg text-gray-200 font-medium">Re-run first-time setup</p>
-                <p className="text-sm text-gray-300">
-                  Walks you through the four-step setup wizard again from scratch.
-                </p>
-              </div>
-              {confirmReset ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setConfirmReset(false);
-                      onRerunSetup();
-                    }}
-                    className="min-h-[44px] px-4 bg-amber-500 hover:bg-amber-400 text-gray-900 rounded-lg font-medium"
-                  >
-                    Confirm
-                  </button>
-                  <button
-                    onClick={() => setConfirmReset(false)}
-                    className="min-h-[44px] px-4 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmReset(true)}
-                  className="min-h-[44px] px-4 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg"
-                >
-                  Re-run setup
-                </button>
-              )}
-            </div>
-          </Card>
+          ) : (
+            <Button className="shrink-0" onClick={() => setConfirmReset(true)}>
+              Re-run setup
+            </Button>
+          )}
         </div>
       </div>
-    </div>
+    </Sheet>
   );
 }

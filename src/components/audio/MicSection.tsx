@@ -1,4 +1,8 @@
-import { BigSelect } from "../shared/BigSelect";
+import { Select } from "../shared/Select";
+import { Slider } from "../shared/Slider";
+import { Meter } from "../shared/Meter";
+import { IconButton } from "../shared/IconButton";
+import { RefreshIcon } from "../shared/icons";
 import { DeviceInfo, isVirtualInput } from "./audioHelpers";
 
 interface MicSectionProps {
@@ -33,71 +37,41 @@ export function MicSection({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="block text-lg text-gray-200 font-medium">{label}</label>
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="mic-select" className="text-base text-ink">
+          {label}
+        </label>
         {onRefreshDevices && (
-          <button
-            onClick={onRefreshDevices}
-            title="Re-scan connected microphones"
-            className="min-h-[44px] text-base text-gray-300 hover:text-amber-300 flex items-center gap-1 px-3 py-1 rounded hover:bg-gray-800"
-          >
-            ↻ Refresh
-          </button>
+          <IconButton aria-label="Rescan microphones" onClick={onRefreshDevices} className="-my-1">
+            <RefreshIcon />
+          </IconButton>
         )}
       </div>
-      <BigSelect
+      <Select
+        id="mic-select"
         value={selectedValue}
         onChange={(v) => v && onInputDeviceChange(v)}
         onOpen={onRefreshDevices}
-        options={realInputs.map((d) => ({
-          value: d.internal_name,
-          label: d.display_name,
-        }))}
-        placeholder={realInputs.length === 0 ? "No microphones detected" : "Choose a microphone…"}
+        options={realInputs.map((d) => ({ value: d.internal_name, label: d.display_name }))}
+        placeholder={realInputs.length === 0 ? "No microphones detected" : "Choose a microphone"}
+      />
+      <Meter level={micLevel} label="Microphone" />
+      <Slider
+        min={0}
+        max={150}
+        value={Math.round(micVolume * 100)}
+        onChange={(v) => onMicVolumeChange(v / 100)}
+        aria-label="Microphone volume"
+        valueLabel={micVolume === 0 ? "Muted" : `${Math.round(micVolume * 100)}%`}
       />
       {onOpenDiagnostics && (
         <button
+          type="button"
           onClick={onOpenDiagnostics}
-          className="min-h-[44px] text-base text-gray-300 hover:text-amber-300 underline"
+          className="rounded text-sm text-muted underline underline-offset-2 transition-colors hover:text-ink"
         >
           Don't see your microphone?
         </button>
-      )}
-
-      {/* Level meter */}
-      <div className="h-4 bg-gray-800 rounded-full overflow-hidden">
-        <div
-          className={`h-full transition-all duration-75 ${
-            micLevel > 0.8 ? "bg-red-500" : micLevel > 0.5 ? "bg-yellow-500" : "bg-green-500"
-          }`}
-          style={{ width: `${Math.min(micLevel * 100, 100)}%` }}
-        />
-      </div>
-
-      {/* Mic volume slider with mute label */}
-      <div className="flex items-center gap-3 pt-1">
-        <span className="text-base text-gray-200 w-24">
-          {micVolume === 0 ? (
-            <span className="text-amber-400 font-medium">Muted</span>
-          ) : (
-            `${Math.round(micVolume * 100)}%`
-          )}
-        </span>
-        <input
-          type="range"
-          min="0"
-          max="150"
-          value={Math.round(micVolume * 100)}
-          onChange={(e) => onMicVolumeChange(parseInt(e.target.value) / 100)}
-          className="flex-1"
-          aria-label="Microphone volume"
-        />
-      </div>
-
-      {micVolume === 0 && (
-        <p className="text-base text-amber-300">
-          Drag the slider to unmute and adjust your microphone volume.
-        </p>
       )}
     </div>
   );

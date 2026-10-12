@@ -1,3 +1,6 @@
+// Timing helpers kept as a complete set of PARIS-standard conversions.
+#![allow(dead_code)]
+
 /// Calculate dit duration in milliseconds from WPM
 ///
 /// Standard Morse timing: 1 word = 50 dit-lengths

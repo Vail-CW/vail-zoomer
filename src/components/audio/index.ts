@@ -1,18 +1,14 @@
 export { MicSection } from "./MicSection";
 export { SidetoneRouteButtons } from "./SidetoneRouteButtons";
 export { LocalOutputPicker } from "./LocalOutputPicker";
-export { VirtualOutputStatusLine } from "./VirtualOutputStatusLine";
+export { VirtualOutputRow } from "./VirtualOutputRow";
 export {
   isVirtualOutput,
   isVirtualInput,
   isRecommendedVirtualOutput,
-  getVirtualOutputStatus,
+  findVirtualOutput,
+  virtualDriverName,
   isVailMidiDevice,
   friendlyMidiName,
 } from "./audioHelpers";
-export type {
-  DeviceInfo,
-  OSType,
-  VirtualOutputStatus,
-  VirtualOutputStatusKind,
-} from "./audioHelpers";
+export type { DeviceInfo, OSType } from "./audioHelpers";

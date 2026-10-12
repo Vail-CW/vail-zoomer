@@ -1,5 +1,70 @@
 use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
-use std::sync::mpsc::{self, Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::time::{Duration, Instant};
+
+/// A parsed MIDI message plus the best estimate of when it actually happened.
+#[derive(Debug, Clone)]
+pub struct TimedMidiEvent {
+    pub event: MidiEvent,
+    pub at: Instant,
+}
+
+/// How long after we send CC1/CC2 an identical incoming value counts as the
+/// adapter echoing our own change rather than a user edit on the device.
+const ECHO_WINDOW: Duration = Duration::from_millis(200);
+
+/// Maximum amount the mapped midir timestamp may lag behind "now".
+const MAX_TIMESTAMP_LAG: Duration = Duration::from_millis(50);
+
+/// Name fragments (lowercase) that identify a Vail adapter's MIDI port.
+const ADAPTER_NAME_HINTS: &[&str] = &["vail", "xiao", "seeed", "samd21", "qt py", "qtpy"];
+
+/// Pick the port to auto-connect to: the saved device if it is present,
+/// otherwise the first port that looks like a Vail adapter.
+pub fn pick_auto_device(ports: &[String], preferred: Option<&str>) -> Option<String> {
+    if let Some(name) = preferred {
+        if ports.iter().any(|p| p == name) {
+            return Some(name.to_string());
+        }
+    }
+    ports
+        .iter()
+        .find(|p| {
+            let lower = p.to_lowercase();
+            ADAPTER_NAME_HINTS.iter().any(|h| lower.contains(h))
+        })
+        .cloned()
+}
+
+/// Lists MIDI input ports. Kept alive for the life of the poll thread because
+/// recreating CoreMIDI clients each cycle stops macOS reporting hot-plugs.
+pub struct PortLister {
+    client: Option<MidiInput>,
+}
+
+impl PortLister {
+    pub fn new() -> Self {
+        Self { client: MidiInput::new("Vail Zoomer List").ok() }
+    }
+
+    pub fn list(&mut self) -> Vec<String> {
+        // Windows (WinMM) / Linux (ALSA): a long-lived MidiInput never sees a
+        // port plugged in after it was created, so re-enumerate with a fresh
+        // client each call. macOS is the opposite: recreating CoreMIDI clients
+        // every cycle makes it stop reporting hot-plugs, so keep one alive.
+        if cfg!(not(target_os = "macos")) || self.client.is_none() {
+            self.client = MidiInput::new("Vail Zoomer List").ok();
+        }
+        match self.client {
+            Some(ref midi_in) => midi_in
+                .ports()
+                .iter()
+                .filter_map(|p| midi_in.port_name(p).ok())
+                .collect(),
+            None => vec![],
+        }
+    }
+}
 
 /// MIDI event types
 #[derive(Debug, Clone)]
@@ -10,6 +75,7 @@ pub enum MidiEvent {
 }
 
 /// Vail adapter MIDI constants (from MIDI_INTEGRATION_SPEC.md)
+#[allow(dead_code)] // protocol reference: not every constant is used yet
 mod vail {
     /// Control Change 0: Mode Control
     /// Values 0-63: MIDI mode (sends Note events), 64-127: Keyboard mode (sends HID)
@@ -37,76 +103,81 @@ mod vail {
     pub const KEYER_KEYAHEAD: u8 = 9;
 }
 
+/// Per-connection state for mapping midir's arbitrary-origin microsecond
+/// timestamps onto `Instant`s.
+struct ClockMap {
+    /// (first timestamp in us, Instant when it arrived)
+    origin: Option<(u64, Instant)>,
+}
+
+impl ClockMap {
+    fn map(&mut self, timestamp_us: u64) -> Instant {
+        let now = Instant::now();
+        let (ts0, t0) = *self.origin.get_or_insert((timestamp_us, now));
+        let mapped = t0 + Duration::from_micros(timestamp_us.saturating_sub(ts0));
+        // A driver clock that drifts or restarts must never place an edge in
+        // the future or far in the past, so clamp to [now - 50 ms, now].
+        let earliest = now.checked_sub(MAX_TIMESTAMP_LAG).unwrap_or(now);
+        mapped.clamp(earliest, now)
+    }
+}
+
 /// MIDI handler for receiving input from and sending commands to Vail adapter
 pub struct MidiHandler {
     input_connection: Option<MidiInputConnection<()>>,
     output_connection: Option<MidiOutputConnection>,
-    event_rx: Receiver<MidiEvent>,
-    event_tx: Sender<MidiEvent>,
-    /// Persistent MidiInput client used only for listing available devices.
-    /// Keeping this alive avoids creating/disposing CoreMIDI clients on every
-    /// poll cycle, which can cause macOS to stop reporting hot-plugged devices.
-    listing_client: Option<MidiInput>,
+    connected_name: Option<String>,
+    event_rx: Receiver<TimedMidiEvent>,
+    event_tx: Sender<TimedMidiEvent>,
+    /// Last CC1 / CC2 values we sent, for echo suppression.
+    sent_cc1: Option<(u8, Instant)>,
+    sent_cc2: Option<(u8, Instant)>,
 }
 
 impl MidiHandler {
-    pub fn new() -> Result<Self, String> {
-        let (event_tx, event_rx) = mpsc::channel();
-
-        // Create a persistent MidiInput for listing devices.
-        // On macOS this avoids repeatedly creating/disposing CoreMIDI clients
-        // which can break hot-plug detection.
-        let listing_client = MidiInput::new("Vail Zoomer List").ok();
-
-        Ok(Self {
+    pub fn new() -> Self {
+        let (event_tx, event_rx) = unbounded();
+        Self {
             input_connection: None,
             output_connection: None,
+            connected_name: None,
             event_rx,
             event_tx,
-            listing_client,
-        })
+            sent_cc1: None,
+            sent_cc2: None,
+        }
     }
 
-    /// List available MIDI input devices
-    pub fn list_devices(&self) -> Vec<String> {
-        // Use the persistent listing client to avoid creating/disposing
-        // CoreMIDI clients on every call (fixes macOS hot-plug detection)
-        if let Some(ref midi_in) = self.listing_client {
-            midi_in
-                .ports()
-                .iter()
-                .filter_map(|p| midi_in.port_name(p).ok())
-                .collect()
-        } else {
-            // Fallback: create a temporary client if persistent one failed
-            match MidiInput::new("Vail Zoomer List") {
-                Ok(midi_in) => {
-                    midi_in
-                        .ports()
-                        .iter()
-                        .filter_map(|p| midi_in.port_name(p).ok())
-                        .collect()
-                }
-                Err(_) => vec![],
-            }
-        }
+    /// A receiver for incoming events. Cloneable so the event loop can block
+    /// on it without holding the handler's lock.
+    pub fn event_receiver(&self) -> Receiver<TimedMidiEvent> {
+        self.event_rx.clone()
+    }
+
+    /// Name of the connected input port, if any.
+    pub fn connected_name(&self) -> Option<&str> {
+        self.input_connection.as_ref().and(self.connected_name.as_deref())
+    }
+
+    /// Drop both connections.
+    pub fn disconnect(&mut self) {
+        self.input_connection = None;
+        self.output_connection = None;
+        self.connected_name = None;
     }
 
     /// Connect to a MIDI device by name (both input and output)
     pub fn connect(&mut self, device_name: &str) -> Result<(), String> {
-        // Disconnect existing connections
-        self.input_connection = None;
-        self.output_connection = None;
+        self.disconnect();
 
-        // Create fresh MIDI input/output for this connection
-        // (midir consumes the MidiInput/MidiOutput when connecting)
+        // midir consumes the MidiInput/MidiOutput when connecting, so make
+        // fresh ones for every connection.
         let midi_in = MidiInput::new("Vail Zoomer Input")
             .map_err(|e| format!("Failed to create MIDI input: {}", e))?;
 
         let midi_out = MidiOutput::new("Vail Zoomer Output")
             .map_err(|e| format!("Failed to create MIDI output: {}", e))?;
 
-        // Find and connect to input port
         let in_port = midi_in
             .ports()
             .into_iter()
@@ -114,14 +185,16 @@ impl MidiHandler {
             .ok_or_else(|| format!("MIDI input device '{}' not found", device_name))?;
 
         let tx = self.event_tx.clone();
+        let mut clock = ClockMap { origin: None };
 
         let input_connection = midi_in
             .connect(
                 &in_port,
                 "vail-zoomer-input",
-                move |_timestamp, message, _| {
+                move |timestamp_us, message, _| {
                     if let Some(event) = parse_midi_message(message) {
-                        let _ = tx.send(event);
+                        let at = clock.map(timestamp_us);
+                        let _ = tx.send(TimedMidiEvent { event, at });
                     }
                 },
                 (),
@@ -129,8 +202,9 @@ impl MidiHandler {
             .map_err(|e| format!("Failed to connect MIDI input: {}", e))?;
 
         self.input_connection = Some(input_connection);
+        self.connected_name = Some(device_name.to_string());
 
-        // Find and connect to output port
+        // Output is optional: input-only is still useful.
         if let Some(out_port) = midi_out
             .ports()
             .into_iter()
@@ -138,8 +212,7 @@ impl MidiHandler {
         {
             match midi_out.connect(&out_port, "vail-zoomer-output") {
                 Ok(mut conn) => {
-                    // Send mode switch command to enable MIDI mode on Vail adapter
-                    // CC0 (0xB0 0x00) with value 127 (0x7F) = MIDI mode
+                    // CC0 = 0 switches the adapter into MIDI mode
                     let mode_switch = [0xB0, vail::CC_MODE, vail::MODE_MIDI];
                     if let Err(e) = conn.send(&mode_switch) {
                         eprintln!("Warning: Failed to send MIDI mode switch: {}", e);
@@ -148,10 +221,7 @@ impl MidiHandler {
                     }
                     self.output_connection = Some(conn);
                 }
-                Err(e) => {
-                    eprintln!("Warning: Could not connect MIDI output: {}", e);
-                    // Don't fail - input-only is still useful
-                }
+                Err(e) => eprintln!("Warning: Could not connect MIDI output: {}", e),
             }
         } else {
             eprintln!("Warning: MIDI output port '{}' not found", device_name);
@@ -160,63 +230,74 @@ impl MidiHandler {
         Ok(())
     }
 
-    /// Send keyer type to Vail adapter (Program Change)
-    pub fn send_keyer_type(&mut self, keyer_type: u8) -> Result<(), String> {
-        if let Some(ref mut conn) = self.output_connection {
-            let message = [0xC0, keyer_type.min(9)];  // Program Change, clamp to valid range
-            conn.send(&message).map_err(|e| e.to_string())
-        } else {
-            Err("MIDI output not connected".to_string())
+    fn send(&mut self, message: &[u8]) -> Result<(), String> {
+        match self.output_connection {
+            Some(ref mut conn) => conn.send(message).map_err(|e| e.to_string()),
+            None => Err("MIDI output not connected".to_string()),
         }
     }
 
-    /// Send WPM to Vail adapter (CC1 = dit duration)
-    /// Formula: dit_duration_ms = value * 2
-    /// WPM ≈ 1200 / dit_duration_ms
+    /// Send keyer type to Vail adapter (Program Change)
+    pub fn send_keyer_type(&mut self, keyer_type: u8) -> Result<(), String> {
+        self.send(&[0xC0, keyer_type.min(9)])
+    }
+
+    /// Send WPM to Vail adapter (CC1 = dit duration, dit_ms = value * 2)
     pub fn send_wpm(&mut self, wpm: u8) -> Result<(), String> {
-        if let Some(ref mut conn) = self.output_connection {
-            // Convert WPM to dit duration: dit_ms = 1200 / wpm
-            // CC value = dit_ms / 2
-            let dit_ms = 1200u16 / (wpm.max(5) as u16);
-            let cc_value = (dit_ms / 2).min(127) as u8;
-            let message = [0xB0, vail::CC_DIT_DURATION, cc_value];
-            conn.send(&message).map_err(|e| e.to_string())
-        } else {
-            Err("MIDI output not connected".to_string())
-        }
+        let dit_ms = 1200u16 / (wpm.max(5) as u16);
+        let cc_value = (dit_ms / 2).min(127) as u8;
+        self.sent_cc1 = Some((cc_value, Instant::now()));
+        self.send(&[0xB0, vail::CC_DIT_DURATION, cc_value])
     }
 
     /// Send sidetone note to Vail adapter (CC2). The adapter expects a raw
     /// MIDI note number (0-127) where 69 = A4 = 440 Hz.
     pub fn send_sidetone_note(&mut self, note: u8) -> Result<(), String> {
-        if let Some(ref mut conn) = self.output_connection {
-            let message = [0xB0, vail::CC_SIDETONE_NOTE, note.min(127)];
-            conn.send(&message).map_err(|e| e.to_string())
-        } else {
-            Err("MIDI output not connected".to_string())
-        }
+        let note = note.min(127);
+        self.sent_cc2 = Some((note, Instant::now()));
+        self.send(&[0xB0, vail::CC_SIDETONE_NOTE, note])
     }
 
     /// Set the adapter's hardware sidetone frequency in Hz. The Vail adapter's
     /// MIDI protocol only accepts a 7-bit MIDI note number, so frequencies are
     /// quantized to the nearest semitone.
     pub fn send_sidetone_frequency_hz(&mut self, hz: f32) -> Result<(), String> {
-        // note = 69 + 12 * log2(hz / 440)
-        let note = (69.0 + 12.0 * (hz.max(1.0) / 440.0).log2()).round();
-        let note = note.clamp(0.0, 127.0) as u8;
-        self.send_sidetone_note(note)
+        self.send_sidetone_note(hz_to_note(hz))
     }
 
-    /// Try to receive a pending MIDI event (non-blocking)
-    pub fn try_recv(&self) -> Option<MidiEvent> {
-        self.event_rx.try_recv().ok()
-    }
-
-    /// Check if connected to a MIDI device
-    pub fn is_connected(&self) -> bool {
-        self.input_connection.is_some()
+    /// True if an incoming CC1/CC2 just repeats a value we sent moments ago.
+    pub fn is_echo(&self, controller: u8, value: u8) -> bool {
+        let sent = match controller {
+            vail::CC_DIT_DURATION => self.sent_cc1,
+            vail::CC_SIDETONE_NOTE => self.sent_cc2,
+            _ => None,
+        };
+        matches!(sent, Some((v, at)) if v == value && at.elapsed() < ECHO_WINDOW)
     }
 }
+
+/// Nearest MIDI note for a frequency (69 = A4 = 440 Hz).
+pub fn hz_to_note(hz: f32) -> u8 {
+    let note = (69.0 + 12.0 * (hz.max(1.0) / 440.0).log2()).round();
+    note.clamp(0.0, 127.0) as u8
+}
+
+/// Frequency in Hz for a MIDI note number.
+pub fn note_to_hz(note: u8) -> f32 {
+    440.0 * 2f32.powf((note as f32 - 69.0) / 12.0)
+}
+
+/// Adapter CC1 value (dit duration = value * 2 ms) to words per minute.
+pub fn cc_dit_to_wpm(value: u8) -> Option<f32> {
+    if value == 0 {
+        return None;
+    }
+    Some(1200.0 / (value as f32 * 2.0))
+}
+
+pub const CC_DIT_DURATION: u8 = vail::CC_DIT_DURATION;
+pub const CC_SIDETONE_NOTE: u8 = vail::CC_SIDETONE_NOTE;
+pub const CC_VOLUME: u8 = 0x07;
 
 /// Parse raw MIDI bytes into a MidiEvent
 fn parse_midi_message(message: &[u8]) -> Option<MidiEvent> {

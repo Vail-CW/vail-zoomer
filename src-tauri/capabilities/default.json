@@ -2,7 +2,9 @@
   "$schema": "https://schema.tauri.app/config/2/capability",
   "identifier": "default",
   "description": "Default capabilities for Vail Zoomer",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:event:default",
@@ -11,6 +13,12 @@
     "shell:allow-open",
     "os:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-inner-size",
+    "core:window:allow-set-resizable",
+    "core:window:allow-center"
   ]
 }

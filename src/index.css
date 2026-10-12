@@ -2,85 +2,331 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ------------------------------------------------------------------ */
+/* Design tokens                                                       */
+/* Colors are space-separated RGB triplets (Tailwind alpha support).   */
+/* <html data-theme="dark|light|system">; no attribute behaves like    */
+/* dark unless the OS prefers light and data-theme is "system".        */
+/* ------------------------------------------------------------------ */
+:root,
+:root[data-theme="dark"] {
+  --bg: 17 18 20;
+  --surface: 25 25 28;
+  --surface-2: 32 32 35;
+  --surface-3: 44 44 49;
+  --text: 231 231 234;
+  --text-muted: 170 170 180;
+  --text-faint: 113 113 122;
+
+  --border: 255 255 255;
+  --border-a: 0.08;
+  --border-strong-a: 0.15;
+
+  --accent: 245 158 11;
+  --accent-hover: 251 176 40;
+  --accent-fg: 26 18 3;
+  --accent-text: 251 191 36;
+  --ring: 251 191 36;
+
+  --success: 34 197 94;
+  --success-fg: 134 239 172;
+  --warn: 245 158 11;
+  --warn-fg: 252 211 77;
+  --danger: 239 68 68;
+  --danger-fg: 252 165 165;
+  --info: 96 165 250;
+  --info-fg: 147 197 253;
+
+  --scrim: 0 0 0;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 4px 12px rgb(0 0 0 / 0.45);
+  --shadow-3: 0 12px 32px rgb(0 0 0 / 0.55);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: 246 246 247;
+  --surface: 255 255 255;
+  --surface-2: 240 240 242;
+  --surface-3: 228 228 232;
+  --text: 24 24 27;
+  --text-muted: 99 99 108;
+  --text-faint: 140 140 150;
+
+  --border: 0 0 0;
+  --border-a: 0.09;
+  --border-strong-a: 0.17;
+
+  --accent: 245 158 11;
+  --accent-hover: 217 119 6;
+  --accent-fg: 26 18 3;
+  --accent-text: 161 80 6;
+  --ring: 217 119 6;
+
+  --success: 22 163 74;
+  --success-fg: 21 111 54;
+  --warn: 217 119 6;
+  --warn-fg: 133 64 8;
+  --danger: 220 38 38;
+  --danger-fg: 165 28 28;
+  --info: 37 99 235;
+  --info-fg: 29 78 190;
+
+  --scrim: 15 15 20;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.08);
+  --shadow-2: 0 4px 12px rgb(0 0 0 / 0.1);
+  --shadow-3: 0 12px 32px rgb(0 0 0 / 0.18);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"],
+  :root:not([data-theme]) {
+    --bg: 246 246 247;
+    --surface: 255 255 255;
+    --surface-2: 240 240 242;
+    --surface-3: 228 228 232;
+    --text: 24 24 27;
+    --text-muted: 99 99 108;
+    --text-faint: 140 140 150;
+
+    --border: 0 0 0;
+    --border-a: 0.09;
+    --border-strong-a: 0.17;
+
+    --accent: 245 158 11;
+    --accent-hover: 217 119 6;
+    --accent-fg: 26 18 3;
+    --accent-text: 161 80 6;
+    --ring: 217 119 6;
+
+    --success: 22 163 74;
+    --success-fg: 21 111 54;
+    --warn: 217 119 6;
+    --warn-fg: 133 64 8;
+    --danger: 220 38 38;
+    --danger-fg: 165 28 28;
+    --info: 37 99 235;
+    --info-fg: 29 78 190;
+
+    --scrim: 15 15 20;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.08);
+    --shadow-2: 0 4px 12px rgb(0 0 0 / 0.1);
+    --shadow-3: 0 12px 32px rgb(0 0 0 / 0.18);
+    color-scheme: light;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px; /* App.tsx scales this for the ui_scale setting */
+  line-height: 1.4;
   font-weight: 400;
-  color: #f3f4f6;
-  background-color: #0f172a;
-  font-size: 17px;
+  color: rgb(var(--text));
+  background-color: rgb(var(--bg));
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background-color: #0f172a;
+  min-width: 0;
+  background-color: rgb(var(--bg));
+  overscroll-behavior: none;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-/* Improved focus states for keyboard navigation */
-*:focus-visible {
-  outline: 3px solid #f59e0b;
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Native feel: chrome is not selectable; text inputs and decoded text are. */
+input,
+textarea,
+select,
+[contenteditable],
+.select-text {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+select,
+input[type="range"],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: default;
+}
+button,
+[role="button"],
+[role="switch"] {
+  cursor: default;
+}
+img,
+svg {
+  -webkit-user-drag: none;
+}
+
+/* Thin overlay scrollbars, visible only while hovering the scroller. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: rgb(var(--border) / 0.25) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: rgb(var(--border) / 0.25);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--border) / 0.4);
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.35);
+}
+
+/* Focus ring: one consistent treatment for every interactive element. */
+:focus-visible {
+  outline: 2px solid rgb(var(--ring));
   outline-offset: 2px;
 }
 
-/* Larger, more accessible range inputs (sliders) */
+button {
+  font: inherit;
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------ */
+/* Range slider: 4px track, 16px thumb. --p (0-100%) is set inline.    */
+/* ------------------------------------------------------------------ */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   background: transparent;
   cursor: pointer;
+  height: 1.1429rem;
+  margin: 0;
 }
 
 input[type="range"]::-webkit-slider-runnable-track {
-  background: #374151;
-  height: 14px;
-  border-radius: 7px;
+  height: 0.2857rem;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    rgb(var(--accent)) var(--p, 0%),
+    rgb(var(--surface-3)) var(--p, 0%)
+  );
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 28px;
-  height: 28px;
+  width: 1.1429rem;
+  height: 1.1429rem;
+  margin-top: -0.4286rem;
   border-radius: 50%;
-  background: #f59e0b;
-  margin-top: -7px;
-  border: 2px solid #1f2937;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  background: rgb(var(--text));
+  border: 2px solid rgb(var(--surface));
+  box-shadow: 0 0 0 1px rgb(var(--border) / var(--border-strong-a)), var(--shadow-1);
 }
 
 input[type="range"]::-moz-range-track {
-  background: #374151;
-  height: 14px;
-  border-radius: 7px;
+  height: 0.2857rem;
+  border-radius: 9999px;
+  background: rgb(var(--surface-3));
 }
-
+input[type="range"]::-moz-range-progress {
+  height: 0.2857rem;
+  border-radius: 9999px;
+  background: rgb(var(--accent));
+}
 input[type="range"]::-moz-range-thumb {
-  width: 28px;
-  height: 28px;
+  width: 1.1429rem;
+  height: 1.1429rem;
   border-radius: 50%;
-  background: #f59e0b;
-  border: 2px solid #1f2937;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  background: rgb(var(--text));
+  border: 2px solid rgb(var(--surface));
+  box-shadow: 0 0 0 1px rgb(var(--border) / var(--border-strong-a)), var(--shadow-1);
 }
 
+input[type="range"]:focus-visible {
+  outline: none;
+}
 input[type="range"]:focus-visible::-webkit-slider-thumb {
-  outline: 3px solid #f59e0b;
+  outline: 2px solid rgb(var(--ring));
   outline-offset: 2px;
 }
-
 input[type="range"]:focus-visible::-moz-range-thumb {
-  outline: 3px solid #f59e0b;
+  outline: 2px solid rgb(var(--ring));
   outline-offset: 2px;
-}
-
-/* Fix dropdown options readability on Linux */
-select {
-  color-scheme: dark;
 }
 
 select option {
-  background-color: #374151; /* gray-700 */
-  color: white;
+  background-color: rgb(var(--surface-2));
+  color: rgb(var(--text));
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion                                                              */
+/* ------------------------------------------------------------------ */
+@keyframes vz-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes vz-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes vz-slide-in {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes vz-spin {
+  to { transform: rotate(360deg); }
+}
+
+.vz-fade-in { animation: vz-fade-in 150ms cubic-bezier(0, 0, 0.2, 1) both; }
+.vz-pop-in { animation: vz-pop-in 150ms cubic-bezier(0, 0, 0.2, 1) both; }
+.vz-slide-in { animation: vz-slide-in 150ms cubic-bezier(0, 0, 0.2, 1) both; }
+.vz-spin { animation: vz-spin 0.9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

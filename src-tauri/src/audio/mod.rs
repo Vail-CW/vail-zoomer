@@ -1,16 +1,23 @@
 mod sidetone;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream, StreamConfig, FromSample};
+use cpal::{Device, FromSample, Stream, StreamConfig, SupportedBufferSize, SupportedStreamConfig};
+use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam_queue::ArrayQueue;
+use ringbuf::{
+    traits::{Consumer, Observer, Producer, Split},
+    HeapCons, HeapProd, HeapRb,
+};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
-use crossbeam_channel::{bounded, Sender, Receiver};
-use ringbuf::{HeapRb, traits::{Producer, Consumer, Split}};
+use std::time::{Duration, Instant};
+
+use crate::config::{BufferSizeMode, Settings};
 
 #[cfg(target_os = "linux")]
 use std::process::Command;
+
 
 /// Linux audio routing: PulseAudio/PipeWire-Pulse honor `PULSE_SINK` /
 /// `PULSE_SOURCE`, and pipewire-alsa honors `PIPEWIRE_NODE`. Setting these
@@ -20,11 +27,17 @@ use std::process::Command;
 ///
 /// Env vars are process-global, but cpal stream construction is serialized
 /// on the audio thread, so set→build→clear is safe within that thread.
+///
+/// Each guard only restores the env vars it actually modified — `for_sink`
+/// leaves `PULSE_SOURCE` alone (and vice versa) so a sink guard never wipes
+/// a caller's pre-existing source routing.
 #[cfg(target_os = "linux")]
 struct PulseRouteGuard {
-    prev_sink: Option<String>,
-    prev_source: Option<String>,
-    prev_pipewire_node: Option<String>,
+    // `Some(prev)` = guard touched this var, restore `prev` (which may itself
+    // be `None`, meaning the var was unset before). `None` = don't touch.
+    restore_sink: Option<Option<String>>,
+    restore_source: Option<Option<String>>,
+    restore_pipewire_node: Option<Option<String>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -40,9 +53,9 @@ impl PulseRouteGuard {
             std::env::remove_var("PIPEWIRE_NODE");
         }
         Self {
-            prev_sink,
-            prev_source: None,
-            prev_pipewire_node,
+            restore_sink: Some(prev_sink),
+            restore_source: None,
+            restore_pipewire_node: Some(prev_pipewire_node),
         }
     }
 
@@ -57,9 +70,9 @@ impl PulseRouteGuard {
             std::env::remove_var("PIPEWIRE_NODE");
         }
         Self {
-            prev_sink: None,
-            prev_source,
-            prev_pipewire_node,
+            restore_sink: None,
+            restore_source: Some(prev_source),
+            restore_pipewire_node: Some(prev_pipewire_node),
         }
     }
 }
@@ -110,17 +123,23 @@ fn resolve_local_sink(explicit: Option<&str>) -> Option<String> {
 #[cfg(target_os = "linux")]
 impl Drop for PulseRouteGuard {
     fn drop(&mut self) {
-        match self.prev_sink.take() {
-            Some(v) => std::env::set_var("PULSE_SINK", v),
-            None => std::env::remove_var("PULSE_SINK"),
+        if let Some(prev) = self.restore_sink.take() {
+            match prev {
+                Some(v) => std::env::set_var("PULSE_SINK", v),
+                None => std::env::remove_var("PULSE_SINK"),
+            }
         }
-        match self.prev_source.take() {
-            Some(v) => std::env::set_var("PULSE_SOURCE", v),
-            None => std::env::remove_var("PULSE_SOURCE"),
+        if let Some(prev) = self.restore_source.take() {
+            match prev {
+                Some(v) => std::env::set_var("PULSE_SOURCE", v),
+                None => std::env::remove_var("PULSE_SOURCE"),
+            }
         }
-        match self.prev_pipewire_node.take() {
-            Some(v) => std::env::set_var("PIPEWIRE_NODE", v),
-            None => std::env::remove_var("PIPEWIRE_NODE"),
+        if let Some(prev) = self.restore_pipewire_node.take() {
+            match prev {
+                Some(v) => std::env::set_var("PIPEWIRE_NODE", v),
+                None => std::env::remove_var("PIPEWIRE_NODE"),
+            }
         }
     }
 }
@@ -142,14 +161,40 @@ pub struct DeviceInfo {
     pub internal_name: String,
 }
 
-/// Ring buffer size for mic audio (holds ~100ms at 48kHz)
-const RING_BUFFER_SIZE: usize = 4800;
+/// Events the audio thread reports to the rest of the app. Always sent from
+/// the audio thread's control loop, never from inside a realtime callback.
+#[derive(Debug, Clone)]
+pub enum AudioEvent {
+    /// A stream reported an error ("input", "output", "local" or "playback").
+    StreamError { stream: &'static str, message: String },
+    /// Automatic recovery succeeded and audio is running again.
+    Restarted,
+    /// Automatic recovery gave up after all retries.
+    RestartFailed { message: String },
+    /// The backend said a device disappeared (unplugged, disabled, ...).
+    DeviceLost,
+}
 
-/// Mic ducking hold time after key up (~250ms at 48kHz)
-const MIC_DUCKING_HOLD_SAMPLES: u32 = 12000;
+/// Mic ring buffer: how much mic audio we try to keep queued (latency vs.
+/// underrun safety), and how big the ring is (headroom for bursts).
+const TARGET_FILL_SECS: f32 = 0.040;
+const RING_SECS: f32 = 0.250;
 
-/// Max test recording samples (5 seconds at 48kHz)
-const MAX_RECORDING_SAMPLES: usize = 48000 * 5;
+/// Mic ducking hold time after key up
+const MIC_DUCKING_HOLD_SECS: f32 = 0.250;
+
+/// Max test recording length in seconds. The buffer is preallocated for up to
+/// 192 kHz so the realtime callback never has to grow it.
+const MAX_RECORDING_SECS: usize = 5;
+const MAX_RECORDING_SAMPLES: usize = 192_000 * MAX_RECORDING_SECS;
+
+/// Capacity of each key-event queue (events are tiny and consumed every
+/// few milliseconds, so this is generous).
+const KEY_QUEUE_CAPACITY: usize = 256;
+
+/// Auto-restart policy after a stream error.
+const RESTART_ATTEMPTS: u32 = 3;
+const RESTART_BACKOFF: Duration = Duration::from_millis(500);
 
 /// Sidetone routing mode
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,20 +204,136 @@ pub enum SidetoneRoute {
     Both,        // Both outputs
 }
 
+impl SidetoneRoute {
+    fn includes_output(self) -> bool {
+        self != SidetoneRoute::LocalOnly
+    }
+    fn includes_local(self) -> bool {
+        self != SidetoneRoute::OutputOnly
+    }
+    fn from_u32(v: u32) -> Self {
+        match v {
+            0 => SidetoneRoute::OutputOnly,
+            1 => SidetoneRoute::LocalOnly,
+            _ => SidetoneRoute::Both,
+        }
+    }
+}
+
+impl From<crate::config::SidetoneRoute> for SidetoneRoute {
+    fn from(r: crate::config::SidetoneRoute) -> Self {
+        match r {
+            crate::config::SidetoneRoute::OutputOnly => SidetoneRoute::OutputOnly,
+            crate::config::SidetoneRoute::LocalOnly => SidetoneRoute::LocalOnly,
+            crate::config::SidetoneRoute::Both => SidetoneRoute::Both,
+        }
+    }
+}
+
+fn buffer_mode_to_u32(m: BufferSizeMode) -> u32 {
+    match m {
+        BufferSizeMode::Auto => 0,
+        BufferSizeMode::Low => 1,
+        BufferSizeMode::Safe => 2,
+    }
+}
+
+/// Frame count requested for a buffer mode (None = let the driver pick).
+fn buffer_mode_frames(v: u32) -> Option<u32> {
+    match v {
+        1 => Some(128),
+        2 => Some(1024),
+        _ => None,
+    }
+}
+
+/// A key transition stamped with when it really happened, so the output
+/// callback can place the edge on the exact sample instead of the buffer start.
+#[derive(Clone, Copy)]
+struct KeyEvent {
+    at: Instant,
+    down: bool,
+}
+
+/// A stream error captured by a cpal error callback. The error callback may
+/// run on the backend's audio thread, so it only does a non-blocking
+/// `try_send`; the audio control loop does everything else.
+struct StreamFault {
+    stream: &'static str,
+    message: String,
+    device_lost: bool,
+}
+
+/// State shared between the handle, the control thread and the realtime
+/// callbacks. Everything here is atomics or lock-free queues, except the
+/// recording buffer (try-locked, never blocked on, from callbacks).
+struct Shared {
+    frequency: AtomicU32,     // f32 bits
+    volume: AtomicU32,        // Sidetone volume for output (Zoom), f32 bits
+    local_volume: AtomicU32,  // Sidetone volume for local monitoring, f32 bits
+    rise_ms: AtomicU32,       // Sidetone rise/fall time, f32 bits
+    mic_volume: AtomicU32,
+    mic_level: AtomicU32,
+    output_level: AtomicU32,
+    route: AtomicU32,          // SidetoneRoute as u32; read per callback so changes are live
+    mic_ducking: AtomicBool,
+    buffer_mode: AtomicU32,    // BufferSizeMode as u32; read at stream build time
+    key_down: AtomicBool,      // Latest requested key state (for introspection / restarts)
+    // One queue per consuming stream so each sees every edge.
+    key_queue_out: Arc<ArrayQueue<KeyEvent>>,
+    key_queue_local: Arc<ArrayQueue<KeyEvent>>,
+    // Test recording state
+    is_recording: AtomicBool,
+    is_playing: AtomicBool,
+    recording_buffer: parking_lot::Mutex<Vec<f32>>,
+    playback_position: AtomicUsize,
+    sample_rate: AtomicU32,
+}
+
+impl Shared {
+    fn new(frequency: f32, volume: f32) -> Self {
+        Self {
+            frequency: AtomicU32::new(frequency.to_bits()),
+            volume: AtomicU32::new(volume.to_bits()),
+            local_volume: AtomicU32::new(0.3_f32.to_bits()),
+            rise_ms: AtomicU32::new(5.0_f32.to_bits()),
+            mic_volume: AtomicU32::new(1.0_f32.to_bits()),
+            mic_level: AtomicU32::new(0.0_f32.to_bits()),
+            output_level: AtomicU32::new(0.0_f32.to_bits()),
+            route: AtomicU32::new(0),
+            mic_ducking: AtomicBool::new(false),
+            buffer_mode: AtomicU32::new(0),
+            key_down: AtomicBool::new(false),
+            key_queue_out: Arc::new(ArrayQueue::new(KEY_QUEUE_CAPACITY)),
+            key_queue_local: Arc::new(ArrayQueue::new(KEY_QUEUE_CAPACITY)),
+            is_recording: AtomicBool::new(false),
+            is_playing: AtomicBool::new(false),
+            recording_buffer: parking_lot::Mutex::new(Vec::with_capacity(MAX_RECORDING_SAMPLES)),
+            playback_position: AtomicUsize::new(0),
+            sample_rate: AtomicU32::new(48000),
+        }
+    }
+
+    fn load_f32(a: &AtomicU32) -> f32 {
+        f32::from_bits(a.load(Ordering::Relaxed))
+    }
+
+    fn route(&self) -> SidetoneRoute {
+        SidetoneRoute::from_u32(self.route.load(Ordering::Relaxed))
+    }
+}
+
 /// Commands sent to the audio thread
 enum AudioCommand {
     Start {
         output_device: Option<String>,
         input_device: Option<String>,
         local_device: Option<String>,
-        sidetone_route: SidetoneRoute,
     },
     Stop,
-    SetFrequency(f32),
-    SetVolume(f32),
-    SetLocalVolume(f32),
-    SetMicVolume(f32),
-    SetSidetoneRoute(SidetoneRoute),
+    /// Route atomics are already updated; the thread only needs to know so it
+    /// can lazily create the local stream.
+    SetSidetoneRoute,
     StartTestRecording,
     StopTestRecording,
     StartPlayback { device: Option<String> },
@@ -180,105 +341,37 @@ enum AudioCommand {
     Shutdown,
 }
 
+type Subscribers = Arc<parking_lot::Mutex<Vec<Sender<AudioEvent>>>>;
+
 /// Handle to control the audio engine from Tauri commands
 /// This is Send + Sync safe because it only holds channels and atomics
 pub struct AudioEngineHandle {
     command_tx: Sender<AudioCommand>,
-    is_key_down: Arc<AtomicBool>,
-    frequency: Arc<AtomicU32>,
-    volume: Arc<AtomicU32>,           // Sidetone volume for output (Zoom)
-    local_volume: Arc<AtomicU32>,     // Sidetone volume for local monitoring
-    mic_volume: Arc<AtomicU32>,
-    mic_level: Arc<AtomicU32>,
-    output_level: Arc<AtomicU32>,
-    sidetone_route: Arc<AtomicU32>,  // Store as u32 for atomic ops
-    mic_ducking_enabled: Arc<AtomicBool>,  // Whether to mute mic while sending
-    mic_ducking_hold: Arc<AtomicU32>,      // Samples remaining for ducking hold after key up
-    // Test recording state
-    is_recording: Arc<AtomicBool>,
-    is_playing: Arc<AtomicBool>,
-    recording_buffer: Arc<parking_lot::Mutex<Vec<f32>>>,
-    playback_position: Arc<AtomicUsize>,
-    sample_rate: Arc<AtomicU32>,
+    shared: Arc<Shared>,
+    subscribers: Subscribers,
 }
 
 impl AudioEngineHandle {
-    /// Create a new audio engine handle and spawn the audio thread
+    /// Create a new audio engine handle and spawn the audio thread.
+    /// Call `apply_settings` afterwards to push the rest of the saved settings.
     pub fn new(frequency: f32, volume: f32) -> Result<Self, String> {
         let (command_tx, command_rx) = bounded::<AudioCommand>(16);
-        let is_key_down = Arc::new(AtomicBool::new(false));
-        let frequency_atomic = Arc::new(AtomicU32::new(frequency.to_bits()));
-        let volume_atomic = Arc::new(AtomicU32::new(volume.to_bits()));
-        let local_volume_atomic = Arc::new(AtomicU32::new(0.3_f32.to_bits())); // Default local volume 30%
-        let mic_volume_atomic = Arc::new(AtomicU32::new(1.0_f32.to_bits())); // Default mic volume 100%
-        let mic_level_atomic = Arc::new(AtomicU32::new(0.0_f32.to_bits())); // Current mic level
-        let output_level_atomic = Arc::new(AtomicU32::new(0.0_f32.to_bits())); // Current output level
-        let sidetone_route_atomic = Arc::new(AtomicU32::new(0)); // 0 = OutputOnly
-        let mic_ducking_enabled = Arc::new(AtomicBool::new(false));
-        let mic_ducking_hold = Arc::new(AtomicU32::new(0));
-        // Test recording state
-        let is_recording = Arc::new(AtomicBool::new(false));
-        let is_playing = Arc::new(AtomicBool::new(false));
-        let recording_buffer = Arc::new(parking_lot::Mutex::new(Vec::with_capacity(MAX_RECORDING_SAMPLES)));
-        let playback_position = Arc::new(AtomicUsize::new(0));
-        let sample_rate = Arc::new(AtomicU32::new(48000)); // Default sample rate
+        let shared = Arc::new(Shared::new(frequency, volume));
+        let subscribers: Subscribers = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
-        let is_key_down_clone = Arc::clone(&is_key_down);
-        let frequency_clone = Arc::clone(&frequency_atomic);
-        let volume_clone = Arc::clone(&volume_atomic);
-        let local_volume_clone = Arc::clone(&local_volume_atomic);
-        let mic_volume_clone = Arc::clone(&mic_volume_atomic);
-        let mic_level_clone = Arc::clone(&mic_level_atomic);
-        let output_level_clone = Arc::clone(&output_level_atomic);
-        let sidetone_route_clone = Arc::clone(&sidetone_route_atomic);
-        let mic_ducking_enabled_clone = Arc::clone(&mic_ducking_enabled);
-        let mic_ducking_hold_clone = Arc::clone(&mic_ducking_hold);
-        let is_recording_clone = Arc::clone(&is_recording);
-        let recording_buffer_clone = Arc::clone(&recording_buffer);
-        let is_playing_clone = Arc::clone(&is_playing);
-        let playback_position_clone = Arc::clone(&playback_position);
-        let sample_rate_clone = Arc::clone(&sample_rate);
+        let shared_clone = Arc::clone(&shared);
+        let subs_clone = Arc::clone(&subscribers);
+        thread::spawn(move || audio_thread(command_rx, shared_clone, subs_clone));
 
-        // Spawn the audio thread
-        thread::spawn(move || {
-            audio_thread(
-                command_rx,
-                is_key_down_clone,
-                frequency_clone,
-                volume_clone,
-                local_volume_clone,
-                mic_volume_clone,
-                mic_level_clone,
-                output_level_clone,
-                sidetone_route_clone,
-                mic_ducking_enabled_clone,
-                mic_ducking_hold_clone,
-                is_recording_clone,
-                recording_buffer_clone,
-                is_playing_clone,
-                playback_position_clone,
-                sample_rate_clone,
-            );
-        });
+        Ok(Self { command_tx, shared, subscribers })
+    }
 
-        Ok(Self {
-            command_tx,
-            is_key_down,
-            frequency: frequency_atomic,
-            volume: volume_atomic,
-            local_volume: local_volume_atomic,
-            mic_volume: mic_volume_atomic,
-            mic_level: mic_level_atomic,
-            output_level: output_level_atomic,
-            sidetone_route: sidetone_route_atomic,
-            mic_ducking_enabled,
-            mic_ducking_hold,
-            is_recording,
-            is_playing,
-            recording_buffer,
-            playback_position,
-            sample_rate,
-        })
+    /// Subscribe to engine events (stream errors, auto-restart results).
+    /// Every subscriber receives every event.
+    pub fn subscribe(&self) -> Receiver<AudioEvent> {
+        let (tx, rx) = unbounded();
+        self.subscribers.lock().push(tx);
+        rx
     }
 
     /// List available audio output devices with friendly names
@@ -331,25 +424,36 @@ impl AudioEngineHandle {
             .unwrap_or_default()
     }
 
-    /// Start audio with optional input and output device names
+    /// Push every audio-relevant saved setting into the live engine. Safe to
+    /// call before or after start; all values are read live by the callbacks
+    /// except the buffer size mode, which applies on the next start.
+    pub fn apply_settings(&self, settings: &Settings) {
+        self.set_sidetone_frequency(settings.sidetone_frequency);
+        self.set_sidetone_volume(settings.sidetone_volume);
+        self.set_local_sidetone_volume(settings.local_sidetone_volume);
+        self.set_sidetone_rise_ms(settings.sidetone_rise_ms);
+        self.set_mic_volume(settings.mic_volume);
+        self.set_mic_ducking(settings.mic_ducking);
+        self.set_buffer_size_mode(settings.buffer_size_mode);
+        self.set_sidetone_route(settings.sidetone_route.into());
+    }
+
+    /// Start audio with optional output device name (uses the current route)
     pub fn start(&self, output_device: Option<String>) -> Result<(), String> {
         self.command_tx.send(AudioCommand::Start {
             output_device,
             input_device: None,
             local_device: None,
-            sidetone_route: SidetoneRoute::OutputOnly,
         })
         .map_err(|_| "Audio thread not responding".to_string())
     }
 
     /// Start audio with both input and output devices
     pub fn start_with_devices(&self, output_device: Option<String>, input_device: Option<String>) -> Result<(), String> {
-        let route = self.get_sidetone_route();
         self.command_tx.send(AudioCommand::Start {
             output_device,
             input_device,
             local_device: None,
-            sidetone_route: route,
         })
         .map_err(|_| "Audio thread not responding".to_string())
     }
@@ -362,12 +466,11 @@ impl AudioEngineHandle {
         local_device: Option<String>,
         sidetone_route: SidetoneRoute,
     ) -> Result<(), String> {
-        self.sidetone_route.store(sidetone_route as u32, Ordering::Relaxed);
+        self.shared.route.store(sidetone_route as u32, Ordering::Relaxed);
         self.command_tx.send(AudioCommand::Start {
             output_device,
             input_device,
             local_device,
-            sidetone_route,
         })
         .map_err(|_| "Audio thread not responding".to_string())
     }
@@ -378,128 +481,151 @@ impl AudioEngineHandle {
             .map_err(|_| "Audio thread not responding".to_string())
     }
 
+    /// Queue a key transition that happened at `at`. The output callbacks place
+    /// the edge on the matching sample within their buffer. Lock-free; safe to
+    /// call from the MIDI thread.
+    pub fn key_event(&self, down: bool, at: Instant) {
+        self.shared.key_down.store(down, Ordering::Relaxed);
+        let ev = KeyEvent { at, down };
+        // force_push drops the oldest event if a queue is full (e.g. a stream
+        // that isn't running) instead of ever blocking or rejecting the newest.
+        let _ = self.shared.key_queue_out.force_push(ev);
+        let _ = self.shared.key_queue_local.force_push(ev);
+    }
+
+    /// Set the key state "now"
+    pub fn set_key_down(&self, down: bool) {
+        self.key_event(down, Instant::now());
+    }
+
     /// Signal key down (start sidetone)
     pub fn key_down(&self) {
-        eprintln!("[audio] *** KEY DOWN - sidetone ON ***");
-        self.is_key_down.store(true, Ordering::Relaxed);
-        // Reset ducking hold to max while key is down
-        self.mic_ducking_hold.store(MIC_DUCKING_HOLD_SAMPLES, Ordering::Relaxed);
+        self.set_key_down(true);
     }
 
     /// Signal key up (stop sidetone)
     pub fn key_up(&self) {
-        eprintln!("[audio] *** KEY UP - sidetone OFF ***");
-        self.is_key_down.store(false, Ordering::Relaxed);
-        // Start the ducking hold countdown (will be decremented in audio callback)
-        self.mic_ducking_hold.store(MIC_DUCKING_HOLD_SAMPLES, Ordering::Relaxed);
+        self.set_key_down(false);
+    }
+
+    /// Sound the sidetone at `frequency_hz` for `duration_ms` through the
+    /// active route, without involving the decoder. Also makes `frequency_hz`
+    /// the live sidetone frequency. The key-up is queued with a future
+    /// timestamp; the callback holds it until it is due.
+    pub fn play_tone_preview(&self, frequency_hz: f32, duration_ms: u32) {
+        self.shared.frequency.store(frequency_hz.to_bits(), Ordering::Relaxed);
+        let now = Instant::now();
+        self.key_event(true, now);
+        self.key_event(false, now + Duration::from_millis(duration_ms as u64));
     }
 
     /// Enable or disable mic ducking while sending
     pub fn set_mic_ducking(&self, enabled: bool) {
-        self.mic_ducking_enabled.store(enabled, Ordering::Relaxed);
+        self.shared.mic_ducking.store(enabled, Ordering::Relaxed);
     }
 
     /// Update sidetone frequency
     pub fn set_sidetone_frequency(&self, frequency: f32) {
-        self.frequency.store(frequency.to_bits(), Ordering::Relaxed);
-        let _ = self.command_tx.send(AudioCommand::SetFrequency(frequency));
+        self.shared.frequency.store(frequency.to_bits(), Ordering::Relaxed);
     }
 
     /// Update sidetone volume (for output to Zoom)
     pub fn set_sidetone_volume(&self, volume: f32) {
-        self.volume.store(volume.to_bits(), Ordering::Relaxed);
-        let _ = self.command_tx.send(AudioCommand::SetVolume(volume));
+        self.shared.volume.store(volume.to_bits(), Ordering::Relaxed);
     }
 
     /// Update local sidetone volume (for local monitoring)
     pub fn set_local_sidetone_volume(&self, volume: f32) {
-        self.local_volume.store(volume.to_bits(), Ordering::Relaxed);
-        let _ = self.command_tx.send(AudioCommand::SetLocalVolume(volume));
+        self.shared.local_volume.store(volume.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Update the sidetone rise/fall time (clamped to 1..=20 ms)
+    pub fn set_sidetone_rise_ms(&self, rise_ms: f32) {
+        let rise_ms = rise_ms.clamp(1.0, 20.0);
+        self.shared.rise_ms.store(rise_ms.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Choose the requested buffer size; takes effect on the next start.
+    pub fn set_buffer_size_mode(&self, mode: BufferSizeMode) {
+        self.shared.buffer_mode.store(buffer_mode_to_u32(mode), Ordering::Relaxed);
     }
 
     /// Update microphone volume
     pub fn set_mic_volume(&self, volume: f32) {
-        self.mic_volume.store(volume.to_bits(), Ordering::Relaxed);
-        let _ = self.command_tx.send(AudioCommand::SetMicVolume(volume));
+        self.shared.mic_volume.store(volume.to_bits(), Ordering::Relaxed);
     }
 
     /// Get current microphone level (0.0 to 1.0)
     pub fn get_mic_level(&self) -> f32 {
-        f32::from_bits(self.mic_level.load(Ordering::Relaxed))
+        Shared::load_f32(&self.shared.mic_level)
     }
 
     /// Get current output level (0.0 to 1.0)
     pub fn get_output_level(&self) -> f32 {
-        f32::from_bits(self.output_level.load(Ordering::Relaxed))
+        Shared::load_f32(&self.shared.output_level)
     }
 
-    /// Set sidetone routing mode
+    /// Set sidetone routing mode. Takes effect immediately; a local-monitor
+    /// stream is created on demand if the engine is running without one.
     pub fn set_sidetone_route(&self, route: SidetoneRoute) {
-        self.sidetone_route.store(route as u32, Ordering::Relaxed);
-        let _ = self.command_tx.send(AudioCommand::SetSidetoneRoute(route));
+        self.shared.route.store(route as u32, Ordering::Relaxed);
+        let _ = self.command_tx.try_send(AudioCommand::SetSidetoneRoute);
     }
 
     /// Get current sidetone routing mode
     pub fn get_sidetone_route(&self) -> SidetoneRoute {
-        match self.sidetone_route.load(Ordering::Relaxed) {
-            0 => SidetoneRoute::OutputOnly,
-            1 => SidetoneRoute::LocalOnly,
-            _ => SidetoneRoute::Both,
-        }
+        self.shared.route()
     }
 
     /// Start test recording - captures 5 seconds of mixed audio
     pub fn start_test_recording(&self) -> Result<(), String> {
         // Clear buffer and start recording
-        {
-            let mut buf = self.recording_buffer.lock();
-            buf.clear();
-        }
-        self.is_recording.store(true, Ordering::Relaxed);
+        self.shared.recording_buffer.lock().clear();
+        self.shared.is_recording.store(true, Ordering::Relaxed);
         self.command_tx.send(AudioCommand::StartTestRecording)
             .map_err(|_| "Audio thread not responding".to_string())
     }
 
     /// Stop test recording
     pub fn stop_test_recording(&self) -> Result<(), String> {
-        self.is_recording.store(false, Ordering::Relaxed);
+        self.shared.is_recording.store(false, Ordering::Relaxed);
         self.command_tx.send(AudioCommand::StopTestRecording)
             .map_err(|_| "Audio thread not responding".to_string())
     }
 
     /// Start playback of recorded audio
     pub fn start_playback(&self, device: Option<String>) -> Result<(), String> {
-        self.playback_position.store(0, Ordering::Relaxed);
-        self.is_playing.store(true, Ordering::Relaxed);
+        self.shared.playback_position.store(0, Ordering::Relaxed);
+        self.shared.is_playing.store(true, Ordering::Relaxed);
         self.command_tx.send(AudioCommand::StartPlayback { device })
             .map_err(|_| "Audio thread not responding".to_string())
     }
 
     /// Stop playback
     pub fn stop_playback(&self) -> Result<(), String> {
-        self.is_playing.store(false, Ordering::Relaxed);
+        self.shared.is_playing.store(false, Ordering::Relaxed);
         self.command_tx.send(AudioCommand::StopPlayback)
             .map_err(|_| "Audio thread not responding".to_string())
     }
 
     /// Check if currently recording
     pub fn is_recording(&self) -> bool {
-        self.is_recording.load(Ordering::Relaxed)
+        self.shared.is_recording.load(Ordering::Relaxed)
     }
 
     /// Check if currently playing back
     pub fn is_playing(&self) -> bool {
-        self.is_playing.load(Ordering::Relaxed)
+        self.shared.is_playing.load(Ordering::Relaxed)
     }
 
     /// Get number of samples recorded
     pub fn get_recording_samples(&self) -> usize {
-        self.recording_buffer.lock().len()
+        self.shared.recording_buffer.lock().len()
     }
 
     /// Get current sample rate
     pub fn get_sample_rate(&self) -> u32 {
-        self.sample_rate.load(Ordering::Relaxed)
+        self.shared.sample_rate.load(Ordering::Relaxed)
     }
 
     /// Get recording duration in seconds
@@ -519,7 +645,7 @@ impl AudioEngineHandle {
         if total == 0 {
             return 0.0;
         }
-        let pos = self.playback_position.load(Ordering::Relaxed);
+        let pos = self.shared.playback_position.load(Ordering::Relaxed);
         (pos as f32 / total as f32).min(1.0)
     }
 }
@@ -530,311 +656,848 @@ impl Drop for AudioEngineHandle {
     }
 }
 
-/// Audio thread that owns the cpal Streams (not Send)
-fn audio_thread(
-    command_rx: Receiver<AudioCommand>,
-    is_key_down: Arc<AtomicBool>,
-    frequency: Arc<AtomicU32>,
-    volume: Arc<AtomicU32>,
-    local_volume: Arc<AtomicU32>,
-    mic_volume: Arc<AtomicU32>,
-    mic_level: Arc<AtomicU32>,
-    output_level: Arc<AtomicU32>,
-    sidetone_route: Arc<AtomicU32>,
-    mic_ducking_enabled: Arc<AtomicBool>,
-    mic_ducking_hold: Arc<AtomicU32>,
-    is_recording: Arc<AtomicBool>,
-    recording_buffer: Arc<parking_lot::Mutex<Vec<f32>>>,
-    is_playing: Arc<AtomicBool>,
-    playback_position: Arc<AtomicUsize>,
-    sample_rate: Arc<AtomicU32>,
-) {
-    let mut output_stream: Option<Stream> = None;
-    let mut local_stream: Option<Stream> = None;
-    let mut input_stream: Option<Stream> = None;
-    let mut playback_stream: Option<Stream> = None;
+/// Devices used by the last Start, remembered for auto-restart and for lazily
+/// creating the local-monitor stream.
+#[derive(Clone)]
+struct StartConfig {
+    output_device: Option<String>,
+    input_device: Option<String>,
+    local_device: Option<String>,
+}
 
-    let init_freq = f32::from_bits(frequency.load(Ordering::Relaxed));
-    let init_vol = f32::from_bits(volume.load(Ordering::Relaxed));
-    let init_local_vol = f32::from_bits(local_volume.load(Ordering::Relaxed));
+/// Owns the cpal streams (which are not Send) on the audio thread.
+struct Engine {
+    shared: Arc<Shared>,
+    fault_tx: Sender<StreamFault>,
+    output_stream: Option<Stream>,
+    local_stream: Option<Stream>,
+    input_stream: Option<Stream>,
+    playback_stream: Option<Stream>,
+    config: Option<StartConfig>,
+    running: bool,
+}
 
-    eprintln!("[audio] Initializing sidetone generators:");
-    eprintln!("[audio]   Main sidetone: freq={} Hz, volume={}", init_freq, init_vol);
-    eprintln!("[audio]   Local sidetone: freq={} Hz, volume={}", init_freq, init_local_vol);
+impl Engine {
+    fn drop_main_streams(&mut self) {
+        self.output_stream = None;
+        self.local_stream = None;
+        self.input_stream = None;
+    }
 
-    let sidetone = Arc::new(parking_lot::Mutex::new(SidetoneGenerator::new(
-        init_freq,
-        init_vol,
-        48000.0,
-    )));
+    /// (Re)build mic input, main output and, if the route needs it, the local
+    /// monitor stream. Only a main-output failure is an error; a missing mic or
+    /// local device is logged and the rest keeps working.
+    fn build_streams(&mut self, cfg: &StartConfig) -> Result<(), String> {
+        self.drop_main_streams();
+        let shared = &self.shared;
 
-    // Create a second sidetone generator for local output (independent phase)
-    let local_sidetone = Arc::new(parking_lot::Mutex::new(SidetoneGenerator::new(
-        init_freq,
-        init_local_vol,
-        48000.0,
-    )));
+        // Stale edges from before this (re)start must not replay.
+        while shared.key_queue_out.pop().is_some() {}
+        while shared.key_queue_local.pop().is_some() {}
 
-    loop {
-        match command_rx.recv() {
-            Ok(AudioCommand::Start { output_device, input_device, local_device, sidetone_route: route }) => {
-                eprintln!("[audio] === Starting audio ===");
-                eprintln!("[audio] Output device: {:?}", output_device);
-                eprintln!("[audio] Input device: {:?}", input_device);
-                eprintln!("[audio] Local device: {:?}", local_device);
-                eprintln!("[audio] Sidetone route: {:?} (0=OutputOnly, 1=LocalOnly, 2=Both)", route as u32);
+        // Output rate is resolved up-front so the mic resampler can target it.
+        // Without this, a 44.1 kHz mic feeding a 48 kHz cable sounds garbled.
+        let target_rate = query_output_sample_rate(cfg.output_device.as_deref());
+        eprintln!("[audio] Target output sample rate (for mic resampler): {} Hz", target_rate);
 
-                // Stop existing streams
-                output_stream = None;
-                local_stream = None;
-                input_stream = None;
+        // Fresh ring per start (no stale data), pre-filled with silence to the
+        // target fill so the output doesn't start by underrunning.
+        let target_fill = ((target_rate * TARGET_FILL_SECS) as usize).max(1);
+        let capacity = (target_rate * RING_SECS) as usize;
+        let (mut producer, consumer) = HeapRb::<f32>::new(capacity).split();
+        for _ in 0..target_fill {
+            let _ = producer.try_push(0.0);
+        }
 
-                // Create fresh ring buffer for mic audio (prevents stale data issues)
-                let ring_buffer = HeapRb::<f32>::new(RING_BUFFER_SIZE);
-                let (producer, consumer) = ring_buffer.split();
-                let producer = Arc::new(parking_lot::Mutex::new(producer));
-                let consumer = Arc::new(parking_lot::Mutex::new(consumer));
-
-                // Update sidetone route
-                sidetone_route.store(route as u32, Ordering::Relaxed);
-
-                // Determine the output device's sample rate up-front so the mic
-                // stream can resample to match. Without this, a mic running at
-                // 44.1 kHz feeding into a 48 kHz output (e.g. VB-Cable) sounds
-                // garbled / staticy because samples drift against the clock.
-                let target_rate = query_output_sample_rate(output_device.as_deref());
-                eprintln!("[audio] Target output sample rate (for mic resampler): {} Hz", target_rate);
-
-                // Start input stream (mic capture, resampled to target_rate)
-                if let Some(ref input_name) = input_device {
-                    match create_input_stream(Some(input_name.as_str()), Arc::clone(&producer), Arc::clone(&mic_level), target_rate) {
-                        Ok(new_stream) => {
-                            if let Err(e) = new_stream.play() {
-                                eprintln!("Failed to start mic input: {}", e);
-                            } else {
-                                input_stream = Some(new_stream);
-                                eprintln!("[audio] Mic input started: {}", input_name);
-                            }
-                        }
-                        Err(e) => eprintln!("Failed to create mic input stream: {}", e),
-                    }
-                } else {
-                    // Try default input device
-                    match create_input_stream(None, Arc::clone(&producer), Arc::clone(&mic_level), target_rate) {
-                        Ok(new_stream) => {
-                            if let Err(e) = new_stream.play() {
-                                eprintln!("Failed to start default mic: {}", e);
-                            } else {
-                                input_stream = Some(new_stream);
-                                eprintln!("[audio] Default mic input started");
-                            }
-                        }
-                        Err(e) => eprintln!("No mic available: {}", e),
-                    }
+        match create_input_stream(
+            cfg.input_device.as_deref(),
+            producer,
+            Arc::clone(shared),
+            target_rate,
+            target_fill,
+            self.fault_tx.clone(),
+        ) {
+            Ok(stream) => match stream.play() {
+                Ok(()) => {
+                    self.input_stream = Some(stream);
+                    eprintln!("[audio] Mic input started: {:?}", cfg.input_device);
                 }
+                Err(e) => eprintln!("[audio] Failed to start mic input: {}", e),
+            },
+            Err(e) => eprintln!("[audio] Failed to create mic input stream: {}", e),
+        }
 
-                // Determine if sidetone should go to main output
-                let include_sidetone_in_output = route == SidetoneRoute::OutputOnly || route == SidetoneRoute::Both;
+        let stream = create_output_stream(
+            cfg.output_device.as_deref(),
+            Arc::clone(shared),
+            consumer,
+            target_fill,
+            self.fault_tx.clone(),
+        )?;
+        stream.play().map_err(|e| format!("Failed to start audio output: {}", e))?;
+        self.output_stream = Some(stream);
+        eprintln!("[audio] Audio output started");
 
-                // Start main output stream (mic + optionally sidetone mixed) for VB-Cable/Zoom
-                match create_output_stream(
-                    output_device.as_deref(),
-                    Arc::clone(&sidetone),
-                    Arc::clone(&is_key_down),
-                    Arc::clone(&consumer),
-                    Arc::clone(&mic_volume),
-                    Arc::clone(&output_level),
-                    include_sidetone_in_output,
-                    Arc::clone(&mic_ducking_enabled),
-                    Arc::clone(&mic_ducking_hold),
-                    Arc::clone(&is_recording),
-                    Arc::clone(&recording_buffer),
-                    Arc::clone(&sample_rate),
-                ) {
-                    Ok(new_stream) => {
-                        if let Err(e) = new_stream.play() {
-                            eprintln!("Failed to start audio output: {}", e);
-                        } else {
-                            output_stream = Some(new_stream);
-                            eprintln!("[audio] Audio output started (sidetone: {})", include_sidetone_in_output);
-                        }
-                    }
-                    Err(e) => eprintln!("Failed to create audio output stream: {}", e),
+        self.config = Some(cfg.clone());
+        self.running = true;
+        self.ensure_local_stream();
+        Ok(())
+    }
+
+    /// Create the local monitor stream if the route wants it and it doesn't exist.
+    fn ensure_local_stream(&mut self) {
+        if !self.running || self.local_stream.is_some() || !self.shared.route().includes_local() {
+            return;
+        }
+        let local_device = self.config.as_ref().and_then(|c| c.local_device.clone());
+        eprintln!("[audio] Creating local output stream with device: {:?}", local_device);
+        match create_local_output_stream(local_device.as_deref(), Arc::clone(&self.shared), self.fault_tx.clone()) {
+            Ok(stream) => match stream.play() {
+                Ok(()) => {
+                    self.local_stream = Some(stream);
+                    eprintln!("[audio] Local sidetone output started");
                 }
+                Err(e) => eprintln!("[audio] Failed to start local output: {}", e),
+            },
+            Err(e) => eprintln!("[audio] Failed to create local output stream: {}", e),
+        }
+    }
 
-                // Start local output stream (sidetone only) if routing requires it
-                let need_local_output = route == SidetoneRoute::LocalOnly || route == SidetoneRoute::Both;
-                eprintln!("[audio] Need local output: {} (route={:?})", need_local_output, route as u32);
-                if need_local_output {
-                    let local_dev = local_device.as_deref();
-                    eprintln!("[audio] Creating local output stream with device: {:?}", local_dev);
-                    match create_local_output_stream(
-                        local_dev,
-                        Arc::clone(&local_sidetone),
-                        Arc::clone(&is_key_down),
-                        Arc::clone(&local_volume),
-                    ) {
-                        Ok(new_stream) => {
-                            if let Err(e) = new_stream.play() {
-                                eprintln!("[audio] Failed to start local output: {}", e);
-                            } else {
-                                local_stream = Some(new_stream);
-                                eprintln!("[audio] Local sidetone output started successfully!");
-                                // Routing is now handled in create_local_output_stream
-                            }
-                        }
-                        Err(e) => eprintln!("[audio] Failed to create local output stream: {}", e),
-                    }
-                } else {
-                    eprintln!("[audio] Skipping local output (not needed for this route)");
+    fn start_playback(&mut self, device: Option<&str>) {
+        self.playback_stream = None;
+        // Copy out under the lock here (control thread), so the callback can
+        // own plain data and never touch the mutex.
+        let recording = self.shared.recording_buffer.lock().clone();
+        let rec_rate = self.shared.sample_rate.load(Ordering::Relaxed) as f32;
+        match create_playback_stream(device, recording, rec_rate, Arc::clone(&self.shared), self.fault_tx.clone()) {
+            Ok(stream) => match stream.play() {
+                Ok(()) => {
+                    self.playback_stream = Some(stream);
+                    eprintln!("[audio] Playback started");
                 }
-            }
-            Ok(AudioCommand::Stop) => {
-                output_stream = None;
-                local_stream = None;
-                input_stream = None;
-            }
-            Ok(AudioCommand::SetFrequency(freq)) => {
-                sidetone.lock().set_frequency(freq);
-                local_sidetone.lock().set_frequency(freq);
-            }
-            Ok(AudioCommand::SetVolume(vol)) => {
-                sidetone.lock().set_volume(vol);
-            }
-            Ok(AudioCommand::SetLocalVolume(vol)) => {
-                local_sidetone.lock().set_volume(vol);
-            }
-            Ok(AudioCommand::SetMicVolume(_vol)) => {
-                // mic_volume is read directly from atomic in the callback
-            }
-            Ok(AudioCommand::SetSidetoneRoute(_route)) => {
-                // Route changes require restart of audio to take effect
-                // The atomic is updated, but streams need restart
-            }
-            Ok(AudioCommand::StartTestRecording) => {
-                eprintln!("[audio] Starting test recording...");
-                // Recording flag is already set by handle method
-            }
-            Ok(AudioCommand::StopTestRecording) => {
-                eprintln!("[audio] Stopped test recording. Samples: {}", recording_buffer.lock().len());
-                // Recording flag is already cleared by handle method
-            }
-            Ok(AudioCommand::StartPlayback { device }) => {
-                eprintln!("[audio] Starting playback on device: {:?}", device);
-                // Stop any existing playback stream
-                playback_stream = None;
-
-                // Create playback stream
-                match create_playback_stream(
-                    device.as_deref(),
-                    Arc::clone(&recording_buffer),
-                    Arc::clone(&is_playing),
-                    Arc::clone(&playback_position),
-                ) {
-                    Ok(new_stream) => {
-                        if let Err(e) = new_stream.play() {
-                            eprintln!("[audio] Failed to start playback: {}", e);
-                            is_playing.store(false, Ordering::Relaxed);
-                        } else {
-                            playback_stream = Some(new_stream);
-                            eprintln!("[audio] Playback started");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[audio] Failed to create playback stream: {}", e);
-                        is_playing.store(false, Ordering::Relaxed);
-                    }
+                Err(e) => {
+                    eprintln!("[audio] Failed to start playback: {}", e);
+                    self.shared.is_playing.store(false, Ordering::Relaxed);
                 }
-            }
-            Ok(AudioCommand::StopPlayback) => {
-                eprintln!("[audio] Stopping playback");
-                playback_stream = None;
-                // is_playing flag is already cleared by handle method
-            }
-            Ok(AudioCommand::Shutdown) | Err(_) => {
-                output_stream = None;
-                local_stream = None;
-                input_stream = None;
-                playback_stream = None;
-                break;
+            },
+            Err(e) => {
+                eprintln!("[audio] Failed to create playback stream: {}", e);
+                self.shared.is_playing.store(false, Ordering::Relaxed);
             }
         }
     }
 }
 
-type MicConsumer = Arc<parking_lot::Mutex<ringbuf::HeapCons<f32>>>;
-type MicProducer = Arc<parking_lot::Mutex<ringbuf::HeapProd<f32>>>;
+fn emit(subscribers: &Subscribers, event: AudioEvent) {
+    // Drop subscribers whose receiver went away.
+    subscribers.lock().retain(|tx| tx.send(event.clone()).is_ok());
+}
 
-/// Resolve the output device that would be used for a given name and return
-/// its default sample rate. Mirrors the lookup logic in `create_output_stream`
-/// so the mic resampler targets the same device that the output stream will
-/// actually open. Falls back to 48 kHz (VB-Cable's native rate, also the
-/// default for most modern output devices) if anything fails.
-///
-/// **Don't optimize this with `pactl list sinks`** — the cpal output stream
-/// goes through the ALSA "pipewire" shim and opens at whatever rate that
-/// shim negotiates, NOT the sink's native rate. PipeWire then resamples
-/// internally between the two. If we point the mic resampler at the sink's
-/// rate, the producer rate and consumer rate diverge, ring buffer overflows,
-/// and audio comes out pitched-down + scratchy. cpal's `default_output_config()`
-/// returns what the stream will actually negotiate — that's the right answer.
-fn query_output_sample_rate(device_name: Option<&str>) -> f32 {
-    let host = cpal::default_host();
+/// Tracks an in-progress automatic restart so the control loop can keep
+/// servicing commands between attempts instead of sleeping.
+struct Restart {
+    attempt: u32,
+    next_at: Instant,
+}
 
-    let device = if let Some(name) = device_name {
-        let devices: Vec<_> = match host.output_devices() {
-            Ok(d) => d.collect(),
-            Err(_) => return 48000.0,
-        };
+/// Audio thread that owns the cpal Streams (not Send)
+fn audio_thread(command_rx: Receiver<AudioCommand>, shared: Arc<Shared>, subscribers: Subscribers) {
+    let (fault_tx, fault_rx) = bounded::<StreamFault>(16);
+    let mut engine = Engine {
+        shared: Arc::clone(&shared),
+        fault_tx,
+        output_stream: None,
+        local_stream: None,
+        input_stream: None,
+        playback_stream: None,
+        config: None,
+        running: false,
+    };
+    let mut restart: Option<Restart> = None;
 
-        #[cfg(target_os = "linux")]
-        let search_names: Vec<&str> = if name.to_lowercase().contains("vailzoomer")
-            || name.to_lowercase().contains("vail zoomer")
-        {
-            vec![name, "VailZoomer", "vailzoomer", "Vail Zoomer", "pipewire", "default"]
-        } else {
-            vec![name, "pipewire", "default"]
-        };
-        #[cfg(not(target_os = "linux"))]
-        let search_names: Vec<&str> = vec![name];
+    loop {
+        // Wake at least every 50 ms to poll stream faults, sooner if a restart is due.
+        let mut wait = Duration::from_millis(50);
+        if let Some(r) = &restart {
+            wait = wait.min(r.next_at.saturating_duration_since(Instant::now()));
+        }
 
-        let mut found = None;
-        for search_name in &search_names {
-            found = devices
-                .iter()
-                .find(|d| {
-                    d.name()
-                        .map(|n| {
-                            n == *search_name
-                                || n.to_lowercase().contains(&search_name.to_lowercase())
-                                || search_name.to_lowercase().contains(&n.to_lowercase())
-                        })
-                        .unwrap_or(false)
-                });
-            if found.is_some() {
+        match command_rx.recv_timeout(wait) {
+            Ok(AudioCommand::Start { output_device, input_device, local_device }) => {
+                eprintln!("[audio] === Starting audio ===");
+                eprintln!("[audio] Output device: {:?}", output_device);
+                eprintln!("[audio] Input device: {:?}", input_device);
+                eprintln!("[audio] Local device: {:?}", local_device);
+                eprintln!("[audio] Sidetone route: {:?} (0=OutputOnly, 1=LocalOnly, 2=Both)", shared.route() as u32);
+
+                restart = None;
+                let cfg = StartConfig { output_device, input_device, local_device };
+                if let Err(e) = engine.build_streams(&cfg) {
+                    eprintln!("[audio] Failed to start audio: {}", e);
+                    engine.running = false;
+                    emit(&subscribers, AudioEvent::StreamError { stream: "output", message: e });
+                }
+                while fault_rx.try_recv().is_ok() {}
+            }
+            Ok(AudioCommand::Stop) => {
+                restart = None;
+                engine.running = false;
+                engine.drop_main_streams();
+            }
+            Ok(AudioCommand::SetSidetoneRoute) => {
+                // The callbacks already read the new route atomically; only the
+                // local stream may need to appear.
+                engine.ensure_local_stream();
+            }
+            Ok(AudioCommand::StartTestRecording) => {
+                eprintln!("[audio] Starting test recording...");
+            }
+            Ok(AudioCommand::StopTestRecording) => {
+                eprintln!("[audio] Stopped test recording. Samples: {}", shared.recording_buffer.lock().len());
+            }
+            Ok(AudioCommand::StartPlayback { device }) => {
+                eprintln!("[audio] Starting playback on device: {:?}", device);
+                engine.start_playback(device.as_deref());
+            }
+            Ok(AudioCommand::StopPlayback) => {
+                eprintln!("[audio] Stopping playback");
+                engine.playback_stream = None;
+            }
+            Ok(AudioCommand::Shutdown) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                engine.drop_main_streams();
+                engine.playback_stream = None;
                 break;
             }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
-        found.cloned().or_else(|| host.default_output_device())
-    } else {
-        host.default_output_device()
-    };
 
+        // Surface faults reported by stream error callbacks.
+        while let Ok(fault) = fault_rx.try_recv() {
+            eprintln!("[audio] {} stream error: {}", fault.stream, fault.message);
+            if fault.stream == "playback" {
+                shared.is_playing.store(false, Ordering::Relaxed);
+                emit(&subscribers, AudioEvent::StreamError { stream: fault.stream, message: fault.message });
+                continue;
+            }
+            // Ignore follow-on faults while already stopped or recovering.
+            if !engine.running || restart.is_some() {
+                continue;
+            }
+            if fault.device_lost {
+                emit(&subscribers, AudioEvent::DeviceLost);
+            }
+            emit(&subscribers, AudioEvent::StreamError { stream: fault.stream, message: fault.message });
+            restart = Some(Restart { attempt: 0, next_at: Instant::now() + RESTART_BACKOFF });
+        }
+
+        // Run a due restart attempt.
+        let due = restart.as_ref().map_or(false, |r| Instant::now() >= r.next_at);
+        if due {
+            let mut r = restart.take().unwrap();
+            r.attempt += 1;
+            let mut cfg = engine.config.clone().unwrap_or(StartConfig {
+                output_device: None,
+                input_device: None,
+                local_device: None,
+            });
+            // Last resort: the named devices may be gone for good, so try the defaults.
+            if r.attempt >= RESTART_ATTEMPTS {
+                cfg = StartConfig { output_device: None, input_device: None, local_device: None };
+            }
+            eprintln!("[audio] Restart attempt {}/{}", r.attempt, RESTART_ATTEMPTS);
+            match engine.build_streams(&cfg) {
+                Ok(()) => {
+                    // Dropping the old streams can raise stale errors; discard them.
+                    while fault_rx.try_recv().is_ok() {}
+                    emit(&subscribers, AudioEvent::Restarted);
+                }
+                Err(e) if r.attempt >= RESTART_ATTEMPTS => {
+                    engine.running = false;
+                    emit(&subscribers, AudioEvent::RestartFailed { message: e });
+                }
+                Err(_) => {
+                    r.next_at = Instant::now() + RESTART_BACKOFF;
+                    restart = Some(r);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Realtime DSP. Everything below runs inside cpal callbacks: no locks, no
+// allocation, no I/O. State lives in plain structs owned by the closure.
+// ---------------------------------------------------------------------------
+
+/// Smooth, bounded saturation: linear up to `KNEE`, then a tanh curve that
+/// approaches (but never exceeds) 1.0, so loud peaks round off instead of
+/// hard-clipping.
+const LIMITER_KNEE: f32 = 0.9;
+
+#[inline]
+fn soft_clip(x: f32) -> f32 {
+    let a = x.abs();
+    if a <= LIMITER_KNEE {
+        x
+    } else {
+        let head = 1.0 - LIMITER_KNEE;
+        x.signum() * (LIMITER_KNEE + head * ((a - LIMITER_KNEE) / head).tanh())
+    }
+}
+
+/// Feed-forward peak limiter (fast attack, ~50 ms release) followed by the
+/// soft clipper above as a guarantee that |output| <= 1.0.
+struct Limiter {
+    gain: f32,
+    attack: f32,
+    release: f32,
+}
+
+impl Limiter {
+    fn new(sample_rate: f32) -> Self {
+        Self {
+            gain: 1.0,
+            attack: 1.0 - (-1.0 / (0.0005 * sample_rate)).exp(),
+            release: 1.0 - (-1.0 / (0.050 * sample_rate)).exp(),
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let a = x.abs();
+        let target = if a > LIMITER_KNEE { LIMITER_KNEE / a } else { 1.0 };
+        let coef = if target < self.gain { self.attack } else { self.release };
+        self.gain += (target - self.gain) * coef;
+        soft_clip(x * self.gain)
+    }
+}
+
+/// Turns timestamped key events into sample-accurate edges inside a callback.
+///
+/// An event stamped `at` is placed at sample offset
+/// `(at + buffer_duration - callback_start) * rate`: i.e. every edge is
+/// delayed by exactly one buffer. A constant delay preserves dit/dah timing
+/// to the sample, whereas snapping to buffer boundaries would add up to a
+/// buffer of jitter. Events that are already older than that land on sample 0
+/// of this buffer, and events scheduled beyond this buffer (tone preview
+/// key-ups) are held until a later callback.
+struct KeyScheduler {
+    queue: Arc<ArrayQueue<KeyEvent>>,
+    pending: Option<KeyEvent>,
+}
+
+impl KeyScheduler {
+    fn new(queue: Arc<ArrayQueue<KeyEvent>>) -> Self {
+        Self { queue, pending: None }
+    }
+
+    /// Next edge due within this buffer as `(sample offset, key_down)`.
+    fn next_edge(&mut self, now: Instant, latency_s: f64, rate: f64, frames: usize) -> Option<(usize, bool)> {
+        let ev = self.pending.take().or_else(|| self.queue.pop())?;
+        let rel_s = if ev.at >= now {
+            (ev.at - now).as_secs_f64() + latency_s
+        } else {
+            latency_s - (now - ev.at).as_secs_f64()
+        };
+        let offset = (rel_s * rate).max(0.0);
+        if offset >= frames as f64 {
+            self.pending = Some(ev);
+            None
+        } else {
+            Some((offset as usize, ev.down))
+        }
+    }
+}
+
+/// Exponential smoothing step for a ~`secs` time constant.
+fn smoothing_coef(secs: f32, rate: f32) -> f32 {
+    1.0 - (-1.0 / (secs * rate)).exp()
+}
+
+/// Output-callback peak/level metering shared by the mixers.
+#[inline]
+fn update_level(level: &AtomicU32, peak: f32) {
+    let current = f32::from_bits(level.load(Ordering::Relaxed));
+    let new_level = if peak > current {
+        peak // Fast attack
+    } else {
+        current * 0.95 + peak * 0.05 // Slow decay
+    };
+    level.store(new_level.to_bits(), Ordering::Relaxed);
+}
+
+/// Main output: mic (from the ring) + sidetone, limited.
+struct MainMixer {
+    shared: Arc<Shared>,
+    consumer: HeapCons<f32>,
+    generator: SidetoneGenerator,
+    sched: KeyScheduler,
+    limiter: Limiter,
+    channels: usize,
+    rate: f64,
+    key_down: bool,
+    // Mic ducking: hold counter (in samples) and a short gain ramp so muting
+    // the mic doesn't click.
+    duck_hold: u32,
+    duck_hold_max: u32,
+    duck_gain: f32,
+    duck_coef: f32,
+    // Sidetone route gate, ramped so live route changes don't click.
+    tone_gate: f32,
+    gate_coef: f32,
+    // If the ring ever grows past this (e.g. after a stall) we drop back to target.
+    target_fill: usize,
+    max_fill: usize,
+}
+
+impl MainMixer {
+    fn new(shared: Arc<Shared>, consumer: HeapCons<f32>, rate: f32, channels: usize, target_fill: usize) -> Self {
+        let queue = Arc::clone(&shared.key_queue_out);
+        let key_down = shared.key_down.load(Ordering::Relaxed);
+        let route = shared.route();
+        Self {
+            generator: SidetoneGenerator::new(
+                Shared::load_f32(&shared.frequency),
+                Shared::load_f32(&shared.volume),
+                rate,
+            ),
+            shared,
+            consumer,
+            sched: KeyScheduler::new(queue),
+            limiter: Limiter::new(rate),
+            channels,
+            rate: rate as f64,
+            key_down,
+            duck_hold: 0,
+            // Derived from the real stream rate, not an assumed 48 kHz.
+            duck_hold_max: (MIC_DUCKING_HOLD_SECS * rate) as u32,
+            duck_gain: 1.0,
+            duck_coef: smoothing_coef(0.003, rate),
+            tone_gate: if route.includes_output() { 1.0 } else { 0.0 },
+            gate_coef: smoothing_coef(0.003, rate),
+            target_fill,
+            max_fill: target_fill * 3,
+        }
+    }
+
+    fn render<T: cpal::SizedSample + FromSample<f32>>(&mut self, data: &mut [T]) {
+        let channels = self.channels;
+        let frames = data.len() / channels;
+        let now = Instant::now();
+        let latency_s = frames as f64 / self.rate;
+        let mut next_edge = self.sched.next_edge(now, latency_s, self.rate, frames);
+
+        // Live parameters: one atomic read each per buffer.
+        self.generator.set_frequency(Shared::load_f32(&self.shared.frequency));
+        self.generator.set_volume(Shared::load_f32(&self.shared.volume));
+        self.generator.set_rise_ms(Shared::load_f32(&self.shared.rise_ms));
+        let mic_vol = Shared::load_f32(&self.shared.mic_volume);
+        let ducking_enabled = self.shared.mic_ducking.load(Ordering::Relaxed);
+        let gate_target = if self.shared.route().includes_output() { 1.0 } else { 0.0 };
+
+        // Clock-drift backstop: after a stall the ring can hold far more than
+        // the target; trim it so latency doesn't stick high.
+        if self.consumer.occupied_len() > self.max_fill {
+            let excess = self.consumer.occupied_len() - self.target_fill;
+            self.consumer.skip(excess);
+        }
+
+        // Test recording: try_lock once per buffer; if the control thread holds
+        // it we just skip this buffer rather than block.
+        let mut rec = if self.shared.is_recording.load(Ordering::Relaxed) {
+            self.shared.recording_buffer.try_lock()
+        } else {
+            None
+        };
+        let rec_limit = MAX_RECORDING_SAMPLES.min(MAX_RECORDING_SECS * self.rate as usize);
+
+        let mut peak: f32 = 0.0;
+
+        for (i, frame) in data.chunks_mut(channels).enumerate() {
+            while let Some((offset, down)) = next_edge {
+                if i < offset {
+                    break;
+                }
+                self.key_down = down;
+                next_edge = self.sched.next_edge(now, latency_s, self.rate, frames);
+            }
+
+            self.tone_gate += (gate_target - self.tone_gate) * self.gate_coef;
+            // Always advance the generator so envelope/phase stay continuous
+            // even when the route currently mutes it.
+            let tone_sample = self.generator.next_sample(self.key_down) * self.tone_gate;
+
+            let raw_mic = self.consumer.try_pop().unwrap_or(0.0);
+
+            // Mic ducking: mute while key is down and for the hold period after.
+            if self.key_down {
+                self.duck_hold = self.duck_hold_max;
+            } else if self.duck_hold > 0 {
+                self.duck_hold -= 1;
+            }
+            let duck_target = if ducking_enabled && self.duck_hold > 0 { 0.0 } else { 1.0 };
+            self.duck_gain += (duck_target - self.duck_gain) * self.duck_coef;
+            let mic_sample = raw_mic * mic_vol * self.duck_gain;
+
+            let mixed = self.limiter.process(tone_sample + mic_sample);
+
+            if let Some(buf) = rec.as_mut() {
+                if buf.len() < rec_limit && buf.len() < buf.capacity() {
+                    buf.push(mixed);
+                }
+            }
+
+            peak = peak.max(mixed.abs());
+
+            let value = T::from_sample(mixed);
+            for channel in frame.iter_mut() {
+                *channel = value;
+            }
+        }
+
+        update_level(&self.shared.output_level, peak);
+    }
+}
+
+/// Local monitor: sidetone only, for headphones/speakers.
+struct LocalMixer {
+    shared: Arc<Shared>,
+    generator: SidetoneGenerator,
+    sched: KeyScheduler,
+    channels: usize,
+    rate: f64,
+    key_down: bool,
+    gate: f32,
+    gate_coef: f32,
+}
+
+impl LocalMixer {
+    fn new(shared: Arc<Shared>, rate: f32, channels: usize) -> Self {
+        let queue = Arc::clone(&shared.key_queue_local);
+        let key_down = shared.key_down.load(Ordering::Relaxed);
+        let route = shared.route();
+        Self {
+            generator: SidetoneGenerator::new(
+                Shared::load_f32(&shared.frequency),
+                Shared::load_f32(&shared.local_volume),
+                rate,
+            ),
+            shared,
+            sched: KeyScheduler::new(queue),
+            channels,
+            rate: rate as f64,
+            key_down,
+            gate: if route.includes_local() { 1.0 } else { 0.0 },
+            gate_coef: smoothing_coef(0.003, rate),
+        }
+    }
+
+    fn render<T: cpal::SizedSample + FromSample<f32>>(&mut self, data: &mut [T]) {
+        let channels = self.channels;
+        let frames = data.len() / channels;
+        let now = Instant::now();
+        let latency_s = frames as f64 / self.rate;
+        let mut next_edge = self.sched.next_edge(now, latency_s, self.rate, frames);
+
+        self.generator.set_frequency(Shared::load_f32(&self.shared.frequency));
+        self.generator.set_volume(Shared::load_f32(&self.shared.local_volume));
+        self.generator.set_rise_ms(Shared::load_f32(&self.shared.rise_ms));
+        let gate_target = if self.shared.route().includes_local() { 1.0 } else { 0.0 };
+
+        for (i, frame) in data.chunks_mut(channels).enumerate() {
+            while let Some((offset, down)) = next_edge {
+                if i < offset {
+                    break;
+                }
+                self.key_down = down;
+                next_edge = self.sched.next_edge(now, latency_s, self.rate, frames);
+            }
+
+            self.gate += (gate_target - self.gate) * self.gate_coef;
+            let value = T::from_sample(self.generator.next_sample(self.key_down) * self.gate);
+            for channel in frame.iter_mut() {
+                *channel = value;
+            }
+        }
+    }
+}
+
+/// Mic capture: downmix to mono, resample to the output rate, and nudge the
+/// resample ratio by up to +/-0.2% so the ring fill hovers at the target.
+/// Input and output devices run on independent clocks, so without this the
+/// ring would slowly overflow or run dry.
+struct MicInput {
+    producer: HeapProd<f32>,
+    shared: Arc<Shared>,
+    channels: usize,
+    /// Input samples consumed per output sample at nominal ratio.
+    base_step: f64,
+    prev_sample: f32,
+    pos: f64,
+    /// One-pole low-pass applied before decimation, to tame aliasing when
+    /// the mic rate is above the output rate. `None` when not downsampling.
+    lowpass_coef: Option<f32>,
+    lowpass_state: f32,
+    target_fill: f32,
+    fill_avg: f32,
+}
+
+impl MicInput {
+    fn new(
+        producer: HeapProd<f32>,
+        shared: Arc<Shared>,
+        channels: usize,
+        input_rate: f32,
+        target_rate: f32,
+        target_fill: usize,
+    ) -> Self {
+        let lowpass_coef = if input_rate > target_rate {
+            // Cutoff at ~45% of the target rate.
+            let fc = 0.45 * target_rate;
+            Some(1.0 - (-2.0 * std::f32::consts::PI * fc / input_rate).exp())
+        } else {
+            None
+        };
+        Self {
+            producer,
+            shared,
+            channels,
+            base_step: input_rate as f64 / target_rate as f64,
+            prev_sample: 0.0,
+            pos: 0.0,
+            lowpass_coef,
+            lowpass_state: 0.0,
+            target_fill: target_fill as f32,
+            fill_avg: target_fill as f32,
+        }
+    }
+
+    fn process<T: Copy>(&mut self, data: &[T])
+    where
+        f32: FromSample<T>,
+    {
+        // Proportional drift control on a smoothed fill level (the raw level
+        // saw-tooths with every buffer). Fill above target -> consume input
+        // slightly faster (fewer output samples), and vice versa.
+        let fill = self.producer.occupied_len() as f32;
+        self.fill_avg += 0.1 * (fill - self.fill_avg);
+        let err = (self.fill_avg - self.target_fill) / self.target_fill;
+        let adjust = (err * 0.004).clamp(-0.002, 0.002) as f64;
+        let step = self.base_step * (1.0 + adjust);
+
+        let mut peak: f32 = 0.0;
+
+        for frame in data.chunks(self.channels) {
+            let mut curr: f32 = frame
+                .iter()
+                .map(|s| <f32 as FromSample<T>>::from_sample_(*s))
+                .sum::<f32>()
+                / self.channels as f32;
+
+            // Track peak on the raw signal
+            peak = peak.max(curr.abs());
+
+            if let Some(coef) = self.lowpass_coef {
+                self.lowpass_state += coef * (curr - self.lowpass_state);
+                curr = self.lowpass_state;
+            }
+
+            // Emit every output sample whose position falls between the
+            // previous and current input sample (linear interpolation).
+            while self.pos <= 1.0 {
+                let resampled = self.prev_sample + (curr - self.prev_sample) * self.pos as f32;
+                let _ = self.producer.try_push(resampled);
+                self.pos += step;
+            }
+            self.pos -= 1.0;
+            self.prev_sample = curr;
+        }
+
+        update_level(&self.shared.mic_level, peak);
+    }
+}
+
+/// Test-recording playback. Owns its (already resampled) samples so the
+/// callback never touches the recording mutex.
+struct Player {
+    shared: Arc<Shared>,
+    data: Vec<f32>,
+    pos: usize,
+    /// Source-recording samples per played sample, for progress reporting.
+    src_per_out: f64,
+    channels: usize,
+}
+
+impl Player {
+    fn render<T: cpal::SizedSample + FromSample<f32>>(&mut self, data: &mut [T]) {
+        if !self.shared.is_playing.load(Ordering::Relaxed) {
+            for sample in data.iter_mut() {
+                *sample = T::from_sample(0.0f32);
+            }
+            return;
+        }
+
+        for frame in data.chunks_mut(self.channels) {
+            let sample = if self.pos < self.data.len() {
+                self.data[self.pos]
+            } else {
+                // Playback finished
+                self.shared.is_playing.store(false, Ordering::Relaxed);
+                0.0
+            };
+            self.pos += 1;
+
+            let value = T::from_sample(sample);
+            for channel in frame.iter_mut() {
+                *channel = value;
+            }
+        }
+
+        let progress = (self.pos as f64 * self.src_per_out) as usize;
+        self.shared.playback_position.store(progress, Ordering::Relaxed);
+    }
+}
+
+/// Linear-interpolation resampler for the (non-realtime) test playback path.
+fn resample_linear(input: &[f32], from_rate: f32, to_rate: f32) -> Vec<f32> {
+    if input.is_empty() || (from_rate - to_rate).abs() < 0.5 {
+        return input.to_vec();
+    }
+    let ratio = from_rate as f64 / to_rate as f64;
+    let out_len = (input.len() as f64 / ratio).ceil() as usize;
+    (0..out_len)
+        .map(|i| {
+            let pos = i as f64 * ratio;
+            let idx = pos as usize;
+            let frac = (pos - idx as f64) as f32;
+            let a = input[idx.min(input.len() - 1)];
+            let b = input[(idx + 1).min(input.len() - 1)];
+            a + (b - a) * frac
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Stream construction (control thread)
+// ---------------------------------------------------------------------------
+
+/// Error callback: forwards to the control loop through a non-blocking
+/// bounded channel (allocating only on the rare error path). All handling,
+/// logging and recovery happen on the audio control thread.
+fn error_callback(stream: &'static str, tx: Sender<StreamFault>) -> impl FnMut(cpal::StreamError) + Send + 'static {
+    move |err| {
+        let device_lost = matches!(err, cpal::StreamError::DeviceNotAvailable);
+        let _ = tx.try_send(StreamFault { stream, message: err.to_string(), device_lost });
+    }
+}
+
+/// Pick the stream config for the requested buffer size. A Fixed size is only
+/// used if the device advertises a range containing it AND a throwaway probe
+/// stream actually opens with it (some backends advertise ranges they reject).
+fn probe_output<T: cpal::SizedSample>(device: &Device, config: &StreamConfig) -> bool {
     device
-        .and_then(|d| d.default_output_config().ok())
-        .map(|c| c.sample_rate().0 as f32)
-        .unwrap_or(48000.0)
+        .build_output_stream(
+            config,
+            |data: &mut [T], _| {
+                for s in data.iter_mut() {
+                    *s = T::EQUILIBRIUM;
+                }
+            },
+            |_| {},
+            None,
+        )
+        .is_ok()
+}
+
+fn probe_input<T: cpal::SizedSample>(device: &Device, config: &StreamConfig) -> bool {
+    device.build_input_stream(config, |_: &[T], _| {}, |_| {}, None).is_ok()
+}
+
+fn pick_stream_config(device: &Device, supported: &SupportedStreamConfig, mode: u32, input: bool) -> StreamConfig {
+    let mut config: StreamConfig = supported.config();
+    let Some(frames) = buffer_mode_frames(mode) else {
+        return config;
+    };
+    let in_range = match supported.buffer_size() {
+        SupportedBufferSize::Range { min, max } => (*min..=*max).contains(&frames),
+        SupportedBufferSize::Unknown => false,
+    };
+    if !in_range {
+        eprintln!("[audio] Buffer size {} not supported by device, using default", frames);
+        return config;
+    }
+    let mut candidate = config.clone();
+    candidate.buffer_size = cpal::BufferSize::Fixed(frames);
+    let ok = match (input, supported.sample_format()) {
+        (false, cpal::SampleFormat::F32) => probe_output::<f32>(device, &candidate),
+        (false, cpal::SampleFormat::I16) => probe_output::<i16>(device, &candidate),
+        (false, cpal::SampleFormat::U16) => probe_output::<u16>(device, &candidate),
+        (true, cpal::SampleFormat::F32) => probe_input::<f32>(device, &candidate),
+        (true, cpal::SampleFormat::I16) => probe_input::<i16>(device, &candidate),
+        (true, cpal::SampleFormat::U16) => probe_input::<u16>(device, &candidate),
+        _ => false,
+    };
+    if ok {
+        eprintln!("[audio] Using fixed buffer of {} frames", frames);
+        config = candidate;
+    } else {
+        eprintln!("[audio] Device rejected fixed buffer of {} frames, using default", frames);
+    }
+    config
+}
+
+/// Find an output device by name (non-Linux) or the generic pipewire/default
+/// ALSA device (Linux, where routing is done by PulseAudio sink name).
+/// Returns the device plus the PulseAudio sink name to route to (Linux only).
+fn resolve_output_device(device_name: Option<&str>, what: &str) -> Result<(Device, Option<String>), String> {
+    let host = cpal::default_host();
+
+    #[cfg(target_os = "linux")]
+    {
+        eprintln!("[audio] Looking for 'pipewire' or 'default' ALSA device for {}...", what);
+        let devices: Vec<_> = host.output_devices().map_err(|e| e.to_string())?.collect();
+        let dev = devices
+            .iter()
+            .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
+            .cloned()
+            .or_else(|| host.default_output_device())
+            .ok_or_else(|| format!("No pipewire/default output device for {}", what))?;
+        eprintln!("[audio] Using ALSA {} device: {:?}", what, dev.name());
+        if let Some(name) = device_name {
+            eprintln!("[audio] Will route {} to PulseAudio sink: {}", what, name);
+        }
+        Ok((dev, device_name.map(|s| s.to_string())))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let device = if let Some(name) = device_name {
+            let devices: Vec<_> = host.output_devices().map_err(|e| e.to_string())?.collect();
+            // Falls back to the default device if the named one is gone.
+            devices
+                .iter()
+                .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+                .cloned()
+                .or_else(|| host.default_output_device())
+                .ok_or_else(|| format!("{} device '{}' not found", what, name))?
+        } else {
+            host.default_output_device()
+                .ok_or_else(|| format!("No default output device for {}", what))?
+        };
+        Ok((device, None))
+    }
 }
 
 /// Create an audio input stream (microphone capture).
-/// Samples are linear-resampled to `target_sample_rate` before being pushed to
-/// the ring buffer, so the output stream can drain at its own rate without
-/// clock drift / garbled-voice artifacts.
+/// Samples are resampled to `target_sample_rate` before being pushed to the
+/// ring buffer, so the output stream can drain at its own rate.
 fn create_input_stream(
     device_name: Option<&str>,
-    producer: MicProducer,
-    mic_level: Arc<AtomicU32>,
+    producer: HeapProd<f32>,
+    shared: Arc<Shared>,
     target_sample_rate: f32,
+    target_fill: usize,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
     // On macOS, always request microphone permission via AVFoundation.
     // CoreAudio alone doesn't always trigger the TCC permission dialog,
@@ -903,16 +1566,16 @@ fn create_input_stream(
             .ok_or_else(|| "No default input device".to_string())?
     };
 
-    let config = device
+    let supported = device
         .default_input_config()
         .map_err(|e| e.to_string())?;
 
     eprintln!("[audio] Input device config: channels={}, sample_rate={}, format={:?}",
-        config.channels(), config.sample_rate().0, config.sample_format());
+        supported.channels(), supported.sample_rate().0, supported.sample_format());
     eprintln!("[audio] Input device name: {:?}", device.name());
 
-    let channels = config.channels() as usize;
-    let input_rate = config.sample_rate().0 as f32;
+    let channels = supported.channels() as usize;
+    let input_rate = supported.sample_rate().0 as f32;
     eprintln!("[audio] Resampling mic {} Hz -> {} Hz", input_rate, target_sample_rate);
 
     // Capture baseline source-output IDs before creating stream
@@ -931,10 +1594,13 @@ fn create_input_stream(
     #[cfg(target_os = "linux")]
     let _route_guard = PulseRouteGuard::for_source(pulse_source.as_deref());
 
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
-        cpal::SampleFormat::I16 => build_input_stream::<i16>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
-        cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &config.into(), producer, channels, mic_level, input_rate, target_sample_rate),
+    let config = pick_stream_config(&device, &supported, shared.buffer_mode.load(Ordering::Relaxed), true);
+    let mic = MicInput::new(producer, shared, channels, input_rate, target_sample_rate, target_fill);
+
+    let stream = match supported.sample_format() {
+        cpal::SampleFormat::F32 => build_input_stream::<f32>(&device, &config, mic, fault_tx),
+        cpal::SampleFormat::I16 => build_input_stream::<i16>(&device, &config, mic, fault_tx),
+        cpal::SampleFormat::U16 => build_input_stream::<u16>(&device, &config, mic, fault_tx),
         _ => return Err("Unsupported input sample format".to_string()),
     }?;
 
@@ -950,152 +1616,41 @@ fn create_input_stream(
 fn build_input_stream<T: cpal::SizedSample>(
     device: &Device,
     config: &StreamConfig,
-    producer: MicProducer,
-    channels: usize,
-    mic_level: Arc<AtomicU32>,
-    input_rate: f32,
-    target_rate: f32,
+    mut mic: MicInput,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String>
 where
     f32: FromSample<T>,
 {
-    let callback_count = Arc::new(AtomicU32::new(0));
-    let callback_count_clone = Arc::clone(&callback_count);
-
-    // Linear resampler state. `step` is how far we advance in input-sample
-    // space per output sample. Each incoming mono input sample bumps the
-    // "input clock" by 1.0; we emit interpolated output samples while
-    // `pos <= 1.0`.
-    let step = input_rate / target_rate;
-    let mut prev_sample: f32 = 0.0;
-    let mut pos: f32 = 0.0;
-
-    let stream = device
+    device
         .build_input_stream(
             config,
-            move |data: &[T], _: &cpal::InputCallbackInfo| {
-                let mut producer = producer.lock();
-                let mut peak: f32 = 0.0;
-
-                // Convert to mono (average channels) and resample to target_rate
-                for frame in data.chunks(channels) {
-                    let curr: f32 = frame
-                        .iter()
-                        .map(|s| <f32 as FromSample<T>>::from_sample_(*s))
-                        .sum::<f32>()
-                        / channels as f32;
-
-                    // Track peak on the pre-resample signal
-                    peak = peak.max(curr.abs());
-
-                    // Emit any output samples whose phase falls between
-                    // prev_sample (last input) and curr (this input).
-                    while pos <= 1.0 {
-                        let resampled = prev_sample + (curr - prev_sample) * pos;
-                        let _ = producer.try_push(resampled);
-                        pos += step;
-                    }
-                    pos -= 1.0;
-                    prev_sample = curr;
-                }
-
-                // Periodic diagnostic log (~once per second at typical callback rates)
-                let count = callback_count_clone.fetch_add(1, Ordering::Relaxed);
-                if count % 100 == 0 {
-                    eprintln!("[mic-input] callback #{}, peak={:.6}, samples={}, channels={}, step={:.4}",
-                        count, peak, data.len(), channels, step);
-                }
-
-                // Update mic level with smoothing (fast attack, slow decay)
-                let current = f32::from_bits(mic_level.load(Ordering::Relaxed));
-                let new_level = if peak > current {
-                    peak // Fast attack
-                } else {
-                    current * 0.95 + peak * 0.05 // Slow decay
-                };
-                mic_level.store(new_level.to_bits(), Ordering::Relaxed);
-            },
-            |err| eprintln!("Input stream error: {}", err),
+            move |data: &[T], _: &cpal::InputCallbackInfo| mic.process(data),
+            error_callback("input", fault_tx),
             None,
         )
-        .map_err(|e| e.to_string())?;
-
-    Ok(stream)
+        .map_err(|e| e.to_string())
 }
 
 /// Create an audio output stream (mic + optionally sidetone mixed) for VB-Cable/Zoom
 fn create_output_stream(
     device_name: Option<&str>,
-    sidetone: Arc<parking_lot::Mutex<SidetoneGenerator>>,
-    is_key_down: Arc<AtomicBool>,
-    consumer: MicConsumer,
-    mic_volume: Arc<AtomicU32>,
-    output_level: Arc<AtomicU32>,
-    include_sidetone: bool,
-    mic_ducking_enabled: Arc<AtomicBool>,
-    mic_ducking_hold: Arc<AtomicU32>,
-    is_recording: Arc<AtomicBool>,
-    recording_buffer: Arc<parking_lot::Mutex<Vec<f32>>>,
-    sample_rate_out: Arc<AtomicU32>,
+    shared: Arc<Shared>,
+    consumer: HeapCons<f32>,
+    target_fill: usize,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
-    let host = cpal::default_host();
+    let (device, pulse_sink) = resolve_output_device(device_name, "output")?;
 
-    // On Linux, always use the "pipewire" ALSA device and route using pactl
-    // The device_name parameter is a PulseAudio sink name, not an ALSA name
-    #[cfg(target_os = "linux")]
-    let (device, pulse_sink) = {
-        eprintln!("[audio] Looking for 'pipewire' or 'default' ALSA output device...");
-        let devices: Vec<_> = host.output_devices()
-            .map_err(|e| e.to_string())?
-            .collect();
-
-        eprintln!("[audio] Available ALSA output devices:");
-        for d in &devices {
-            if let Ok(n) = d.name() {
-                eprintln!("[audio]   - '{}'", n);
-            }
-        }
-
-        let dev = devices.iter()
-            .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
-            .cloned()
-            .or_else(|| host.default_output_device())
-            .ok_or_else(|| "No pipewire/default output device available".to_string())?;
-
-        eprintln!("[audio] Using ALSA output device: {:?}", dev.name());
-        if let Some(name) = device_name {
-            eprintln!("[audio] Will route to PulseAudio sink: {}", name);
-        }
-
-        (dev, device_name.map(|s| s.to_string()))
-    };
-
-    #[cfg(not(target_os = "linux"))]
-    let device = if let Some(name) = device_name {
-        let devices: Vec<_> = host.output_devices()
-            .map_err(|e| e.to_string())?
-            .collect();
-
-        devices.iter()
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
-            .cloned()
-            .or_else(|| host.default_output_device())
-            .ok_or_else(|| format!("Output device '{}' not found", name))?
-    } else {
-        host.default_output_device()
-            .ok_or_else(|| "No default output device".to_string())?
-    };
-
-    let config = device
+    let supported = device
         .default_output_config()
         .map_err(|e| e.to_string())?;
 
-    let sample_rate = config.sample_rate().0 as f32;
-    let channels = config.channels() as usize;
+    let sample_rate = supported.sample_rate().0 as f32;
+    let channels = supported.channels() as usize;
 
-    // Update sidetone sample rate and store it for recording duration calculation
-    sidetone.lock().set_sample_rate(sample_rate);
-    sample_rate_out.store(sample_rate as u32, Ordering::Relaxed);
+    // Stored for recording duration calculation
+    shared.sample_rate.store(sample_rate as u32, Ordering::Relaxed);
 
     // Capture baseline sink-input IDs before creating stream
     #[cfg(target_os = "linux")]
@@ -1109,10 +1664,13 @@ fn create_output_stream(
     #[cfg(target_os = "linux")]
     let _route_guard = PulseRouteGuard::for_sink(pulse_sink.as_deref());
 
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_output_stream::<f32>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold, is_recording, recording_buffer),
-        cpal::SampleFormat::I16 => build_output_stream::<i16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold, is_recording, recording_buffer),
-        cpal::SampleFormat::U16 => build_output_stream::<u16>(&device, &config.into(), sidetone, is_key_down, consumer, mic_volume, output_level, include_sidetone, channels, mic_ducking_enabled, mic_ducking_hold, is_recording, recording_buffer),
+    let config = pick_stream_config(&device, &supported, shared.buffer_mode.load(Ordering::Relaxed), false);
+    let mixer = MainMixer::new(shared, consumer, sample_rate, channels, target_fill);
+
+    let stream = match supported.sample_format() {
+        cpal::SampleFormat::F32 => build_main_stream::<f32>(&device, &config, mixer, fault_tx),
+        cpal::SampleFormat::I16 => build_main_stream::<i16>(&device, &config, mixer, fault_tx),
+        cpal::SampleFormat::U16 => build_main_stream::<u16>(&device, &config, mixer, fault_tx),
         _ => return Err("Unsupported output sample format".to_string()),
     }?;
 
@@ -1121,163 +1679,42 @@ fn create_output_stream(
     if let Some(sink_name) = pulse_sink {
         route_sink_input_to_device_with_baseline(sink_name, baseline_sink_inputs);
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = pulse_sink;
 
     Ok(stream)
 }
 
-fn build_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
+fn build_main_stream<T: cpal::SizedSample + FromSample<f32>>(
     device: &Device,
     config: &StreamConfig,
-    sidetone: Arc<parking_lot::Mutex<SidetoneGenerator>>,
-    is_key_down: Arc<AtomicBool>,
-    consumer: MicConsumer,
-    mic_volume: Arc<AtomicU32>,
-    output_level: Arc<AtomicU32>,
-    include_sidetone: bool,
-    channels: usize,
-    mic_ducking_enabled: Arc<AtomicBool>,
-    mic_ducking_hold: Arc<AtomicU32>,
-    is_recording: Arc<AtomicBool>,
-    recording_buffer: Arc<parking_lot::Mutex<Vec<f32>>>,
+    mut mixer: MainMixer,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
-    let stream = device
+    device
         .build_output_stream(
             config,
-            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-                let key_down = is_key_down.load(Ordering::Relaxed);
-                let mic_vol = f32::from_bits(mic_volume.load(Ordering::Relaxed));
-                let ducking_enabled = mic_ducking_enabled.load(Ordering::Relaxed);
-                let mut sidetone = sidetone.lock();
-                let mut consumer = consumer.lock();
-                let mut peak: f32 = 0.0;
-
-                // Track samples processed for ducking hold countdown
-                let mut samples_in_frame = 0u32;
-
-                for frame in data.chunks_mut(channels) {
-                    samples_in_frame += 1;
-
-                    // Get sidetone sample (only if routing includes it)
-                    let tone_sample = if include_sidetone {
-                        sidetone.next_sample(key_down)
-                    } else {
-                        // Still need to advance the generator to keep it in sync
-                        let _ = sidetone.next_sample(key_down);
-                        0.0
-                    };
-
-                    // Get mic sample from ring buffer (or silence if empty)
-                    let raw_mic = consumer.try_pop().unwrap_or(0.0);
-
-                    // Apply mic ducking: mute mic while key is down or during hold period
-                    let ducking_hold = mic_ducking_hold.load(Ordering::Relaxed);
-                    let should_duck = ducking_enabled && (key_down || ducking_hold > 0);
-                    let mic_sample = if should_duck { 0.0 } else { raw_mic * mic_vol };
-
-                    // Mix: add sidetone and mic together
-                    let mixed = (tone_sample + mic_sample).clamp(-1.0, 1.0);
-
-                    // Capture sample for test recording if active
-                    if is_recording.load(Ordering::Relaxed) {
-                        if let Some(mut buf) = recording_buffer.try_lock() {
-                            if buf.len() < MAX_RECORDING_SAMPLES {
-                                buf.push(mixed);
-                            }
-                        }
-                    }
-
-                    // Track output peak level
-                    peak = peak.max(mixed.abs());
-
-                    let value = T::from_sample(mixed);
-                    for channel in frame.iter_mut() {
-                        *channel = value;
-                    }
-                }
-
-                // Decrement ducking hold counter (only when key is up and ducking is enabled)
-                if ducking_enabled && !key_down {
-                    let current_hold = mic_ducking_hold.load(Ordering::Relaxed);
-                    if current_hold > 0 {
-                        let new_hold = current_hold.saturating_sub(samples_in_frame);
-                        mic_ducking_hold.store(new_hold, Ordering::Relaxed);
-                    }
-                }
-
-                // Update output level with smoothing
-                let current = f32::from_bits(output_level.load(Ordering::Relaxed));
-                let new_level = if peak > current {
-                    peak
-                } else {
-                    current * 0.95 + peak * 0.05
-                };
-                output_level.store(new_level.to_bits(), Ordering::Relaxed);
-            },
-            |err| eprintln!("Output stream error: {}", err),
+            move |data: &mut [T], _: &cpal::OutputCallbackInfo| mixer.render(data),
+            error_callback("output", fault_tx),
             None,
         )
-        .map_err(|e| e.to_string())?;
-
-    Ok(stream)
+        .map_err(|e| e.to_string())
 }
 
 /// Create a local output stream (sidetone only) for monitoring through headphones/speakers
 fn create_local_output_stream(
     device_name: Option<&str>,
-    sidetone: Arc<parking_lot::Mutex<SidetoneGenerator>>,
-    is_key_down: Arc<AtomicBool>,
-    _local_volume: Arc<AtomicU32>,
+    shared: Arc<Shared>,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
-    let host = cpal::default_host();
+    let (device, pulse_sink) = resolve_output_device(device_name, "local output")?;
 
-    // On Linux, always use the "pipewire" ALSA device and route using pactl
-    // The device_name parameter is a PulseAudio sink name, not an ALSA name
-    #[cfg(target_os = "linux")]
-    let (device, pulse_sink) = {
-        eprintln!("[audio] Looking for 'pipewire' or 'default' ALSA device for local output...");
-        let devices: Vec<_> = host.output_devices()
-            .map_err(|e| e.to_string())?
-            .collect();
-
-        let dev = devices.iter()
-            .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
-            .cloned()
-            .or_else(|| host.default_output_device())
-            .ok_or_else(|| "No pipewire/default output device for local monitoring".to_string())?;
-
-        eprintln!("[audio] Using ALSA local output device: {:?}", dev.name());
-        if let Some(name) = device_name {
-            eprintln!("[audio] Will route local sidetone to PulseAudio sink: {}", name);
-        }
-
-        (dev, device_name.map(|s| s.to_string()))
-    };
-
-    #[cfg(not(target_os = "linux"))]
-    let device = if let Some(name) = device_name {
-        let devices: Vec<_> = host.output_devices()
-            .map_err(|e| e.to_string())?
-            .collect();
-
-        devices.iter()
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
-            .cloned()
-            .or_else(|| host.default_output_device())
-            .ok_or_else(|| format!("Local output device '{}' not found", name))?
-    } else {
-        host.default_output_device()
-            .ok_or_else(|| "No default output device for local monitoring".to_string())?
-    };
-
-    let config = device
+    let supported = device
         .default_output_config()
         .map_err(|e| e.to_string())?;
 
-    let sample_rate = config.sample_rate().0 as f32;
-    let channels = config.channels() as usize;
-
-    // Update sidetone sample rate
-    sidetone.lock().set_sample_rate(sample_rate);
+    let sample_rate = supported.sample_rate().0 as f32;
+    let channels = supported.channels() as usize;
 
     // Capture baseline sink-input IDs before creating stream
     #[cfg(target_os = "linux")]
@@ -1290,10 +1727,13 @@ fn create_local_output_stream(
     #[cfg(target_os = "linux")]
     let _route_guard = PulseRouteGuard::for_sink(resolved_local_sink.as_deref());
 
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_local_output_stream::<f32>(&device, &config.into(), sidetone, is_key_down, channels),
-        cpal::SampleFormat::I16 => build_local_output_stream::<i16>(&device, &config.into(), sidetone, is_key_down, channels),
-        cpal::SampleFormat::U16 => build_local_output_stream::<u16>(&device, &config.into(), sidetone, is_key_down, channels),
+    let config = pick_stream_config(&device, &supported, shared.buffer_mode.load(Ordering::Relaxed), false);
+    let mixer = LocalMixer::new(shared, sample_rate, channels);
+
+    let stream = match supported.sample_format() {
+        cpal::SampleFormat::F32 => build_local_output_stream::<f32>(&device, &config, mixer, fault_tx),
+        cpal::SampleFormat::I16 => build_local_output_stream::<i16>(&device, &config, mixer, fault_tx),
+        cpal::SampleFormat::U16 => build_local_output_stream::<u16>(&device, &config, mixer, fault_tx),
         _ => return Err("Unsupported output sample format".to_string()),
     }?;
 
@@ -1306,113 +1746,50 @@ fn create_local_output_stream(
         // No specific device - route to default speakers using baseline
         route_local_stream_to_default_speakers_with_baseline(baseline_sink_inputs);
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = pulse_sink;
 
     Ok(stream)
 }
 
-fn build_local_output_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
+fn build_local_output_stream<T: cpal::SizedSample + FromSample<f32>>(
     device: &Device,
     config: &StreamConfig,
-    sidetone: Arc<parking_lot::Mutex<SidetoneGenerator>>,
-    is_key_down: Arc<AtomicBool>,
-    channels: usize,
+    mut mixer: LocalMixer,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
-    // Debug counters for local output
-    let callback_count = Arc::new(AtomicU32::new(0));
-    let callback_count_clone = Arc::clone(&callback_count);
-    let has_logged_first = Arc::new(AtomicBool::new(false));
-    let has_logged_first_clone = Arc::clone(&has_logged_first);
-    let has_logged_keydown = Arc::new(AtomicBool::new(false));
-    let has_logged_keydown_clone = Arc::clone(&has_logged_keydown);
-
-    let stream_result = device
+    device
         .build_output_stream(
             config,
-            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-                let key_down = is_key_down.load(Ordering::Relaxed);
-                let mut sidetone = sidetone.lock();
-
-                // Debug: log first callback to confirm stream is running
-                let count = callback_count_clone.fetch_add(1, Ordering::Relaxed);
-                if count == 0 && !has_logged_first_clone.swap(true, Ordering::Relaxed) {
-                    eprintln!("[audio-local] *** First callback! Stream is running. Buffer size: {} ***", data.len());
-                }
-
-                // Debug: log first key_down detection
-                if key_down && !has_logged_keydown_clone.swap(true, Ordering::Relaxed) {
-                    eprintln!("[audio-local] *** First key_down detected! Generating sidetone ***");
-                }
-
-                for frame in data.chunks_mut(channels) {
-                    // Get sidetone sample (volume is already in the generator)
-                    let tone_sample = sidetone.next_sample(key_down);
-
-                    let value = T::from_sample(tone_sample);
-                    for channel in frame.iter_mut() {
-                        *channel = value;
-                    }
-                }
-            },
-            |err| eprintln!("Local output stream error: {}", err),
+            move |data: &mut [T], _: &cpal::OutputCallbackInfo| mixer.render(data),
+            error_callback("local", fault_tx),
             None,
         )
-        .map_err(|e| e.to_string())?;
-
-    Ok(stream_result)
+        .map_err(|e| e.to_string())
 }
 
-/// Create a playback stream for test recording playback
+/// Create a playback stream for test recording playback. The recording was
+/// captured at the main output's rate, so it is resampled here to whatever
+/// rate the playback device runs at (otherwise it would play pitch-shifted).
 fn create_playback_stream(
     device_name: Option<&str>,
-    recording_buffer: Arc<parking_lot::Mutex<Vec<f32>>>,
-    is_playing: Arc<AtomicBool>,
-    playback_position: Arc<AtomicUsize>,
+    recording: Vec<f32>,
+    recording_rate: f32,
+    shared: Arc<Shared>,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
-    let host = cpal::default_host();
+    let (device, pulse_sink) = resolve_output_device(device_name, "playback")?;
 
-    // On Linux, always use the "pipewire" ALSA device and route using pactl
-    #[cfg(target_os = "linux")]
-    let (device, pulse_sink) = {
-        eprintln!("[audio] Looking for 'pipewire' or 'default' ALSA device for playback...");
-        let devices: Vec<_> = host.output_devices()
-            .map_err(|e| e.to_string())?
-            .collect();
-
-        let dev = devices.iter()
-            .find(|d| d.name().map(|n| n == "pipewire" || n == "default").unwrap_or(false))
-            .cloned()
-            .or_else(|| host.default_output_device())
-            .ok_or_else(|| "No pipewire/default output device for playback".to_string())?;
-
-        eprintln!("[audio] Using ALSA playback device: {:?}", dev.name());
-        if let Some(name) = device_name {
-            eprintln!("[audio] Will route playback to PulseAudio sink: {}", name);
-        }
-
-        (dev, device_name.map(|s| s.to_string()))
-    };
-
-    #[cfg(not(target_os = "linux"))]
-    let device = if let Some(name) = device_name {
-        let devices: Vec<_> = host.output_devices()
-            .map_err(|e| e.to_string())?
-            .collect();
-
-        devices.iter()
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
-            .cloned()
-            .or_else(|| host.default_output_device())
-            .ok_or_else(|| format!("Playback device '{}' not found", name))?
-    } else {
-        host.default_output_device()
-            .ok_or_else(|| "No default output device for playback".to_string())?
-    };
-
-    let config = device
+    let supported = device
         .default_output_config()
         .map_err(|e| e.to_string())?;
 
-    let channels = config.channels() as usize;
+    let channels = supported.channels() as usize;
+    let device_rate = supported.sample_rate().0 as f32;
+
+    let source_len = recording.len();
+    let data = resample_linear(&recording, recording_rate, device_rate);
+    let src_per_out = if data.is_empty() { 0.0 } else { source_len as f64 / data.len() as f64 };
 
     // Capture baseline sink-input IDs before creating stream
     #[cfg(target_os = "linux")]
@@ -1424,10 +1801,13 @@ fn create_playback_stream(
     #[cfg(target_os = "linux")]
     let _route_guard = PulseRouteGuard::for_sink(resolved_playback_sink.as_deref());
 
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_playback_stream::<f32>(&device, &config.into(), recording_buffer, is_playing, playback_position, channels),
-        cpal::SampleFormat::I16 => build_playback_stream::<i16>(&device, &config.into(), recording_buffer, is_playing, playback_position, channels),
-        cpal::SampleFormat::U16 => build_playback_stream::<u16>(&device, &config.into(), recording_buffer, is_playing, playback_position, channels),
+    let config: StreamConfig = supported.config();
+    let player = Player { shared, data, pos: 0, src_per_out, channels };
+
+    let stream = match supported.sample_format() {
+        cpal::SampleFormat::F32 => build_playback_stream::<f32>(&device, &config, player, fault_tx),
+        cpal::SampleFormat::I16 => build_playback_stream::<i16>(&device, &config, player, fault_tx),
+        cpal::SampleFormat::U16 => build_playback_stream::<u16>(&device, &config, player, fault_tx),
         _ => return Err("Unsupported output sample format".to_string()),
     }?;
 
@@ -1438,59 +1818,87 @@ fn create_playback_stream(
     } else {
         route_local_stream_to_default_speakers_with_baseline(baseline_sink_inputs);
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = pulse_sink;
 
     Ok(stream)
 }
 
-fn build_playback_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
+fn build_playback_stream<T: cpal::SizedSample + FromSample<f32>>(
     device: &Device,
     config: &StreamConfig,
-    recording_buffer: Arc<parking_lot::Mutex<Vec<f32>>>,
-    is_playing: Arc<AtomicBool>,
-    playback_position: Arc<AtomicUsize>,
-    channels: usize,
+    mut player: Player,
+    fault_tx: Sender<StreamFault>,
 ) -> Result<Stream, String> {
-    let stream = device
+    device
         .build_output_stream(
             config,
-            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-                // Check if playback should continue
-                if !is_playing.load(Ordering::Relaxed) {
-                    // Fill with silence
-                    for sample in data.iter_mut() {
-                        *sample = T::from_sample(0.0f32);
-                    }
-                    return;
-                }
-
-                let buf = recording_buffer.lock();
-                let buf_len = buf.len();
-
-                for frame in data.chunks_mut(channels) {
-                    let pos = playback_position.load(Ordering::Relaxed);
-
-                    let sample = if pos < buf_len {
-                        buf[pos]
-                    } else {
-                        // Playback finished
-                        is_playing.store(false, Ordering::Relaxed);
-                        0.0
-                    };
-
-                    playback_position.fetch_add(1, Ordering::Relaxed);
-
-                    let value = T::from_sample(sample);
-                    for channel in frame.iter_mut() {
-                        *channel = value;
-                    }
-                }
-            },
-            |err| eprintln!("Playback stream error: {}", err),
+            move |data: &mut [T], _: &cpal::OutputCallbackInfo| player.render(data),
+            error_callback("playback", fault_tx),
             None,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
 
-    Ok(stream)
+/// Resolve the output device that would be used for a given name and return
+/// its default sample rate. Mirrors the lookup logic in `create_output_stream`
+/// so the mic resampler targets the same device that the output stream will
+/// actually open. Falls back to 48 kHz (VB-Cable's native rate, also the
+/// default for most modern output devices) if anything fails.
+///
+/// **Don't optimize this with `pactl list sinks`** — the cpal output stream
+/// goes through the ALSA "pipewire" shim and opens at whatever rate that
+/// shim negotiates, NOT the sink's native rate. PipeWire then resamples
+/// internally between the two. If we point the mic resampler at the sink's
+/// rate, the producer rate and consumer rate diverge, ring buffer overflows,
+/// and audio comes out pitched-down + scratchy. cpal's `default_output_config()`
+/// returns what the stream will actually negotiate — that's the right answer.
+fn query_output_sample_rate(device_name: Option<&str>) -> f32 {
+    let host = cpal::default_host();
+
+    let device = if let Some(name) = device_name {
+        let devices: Vec<_> = match host.output_devices() {
+            Ok(d) => d.collect(),
+            Err(_) => return 48000.0,
+        };
+
+        #[cfg(target_os = "linux")]
+        let search_names: Vec<&str> = if name.to_lowercase().contains("vailzoomer")
+            || name.to_lowercase().contains("vail zoomer")
+        {
+            vec![name, "VailZoomer", "vailzoomer", "Vail Zoomer", "pipewire", "default"]
+        } else {
+            vec![name, "pipewire", "default"]
+        };
+        #[cfg(not(target_os = "linux"))]
+        let search_names: Vec<&str> = vec![name];
+
+        let mut found = None;
+        for search_name in &search_names {
+            found = devices
+                .iter()
+                .find(|d| {
+                    d.name()
+                        .map(|n| {
+                            n == *search_name
+                                || n.to_lowercase().contains(&search_name.to_lowercase())
+                                || search_name.to_lowercase().contains(&n.to_lowercase())
+                        })
+                        .unwrap_or(false)
+                });
+            if found.is_some() {
+                break;
+            }
+        }
+        found.cloned().or_else(|| host.default_output_device())
+    } else {
+        host.default_output_device()
+    };
+
+    device
+        .and_then(|d| d.default_output_config().ok())
+        .map(|c| c.sample_rate().0 as f32)
+        .unwrap_or(48000.0)
 }
 
 /// On Linux, move our local sidetone stream to the default speakers.
@@ -1566,11 +1974,6 @@ fn route_local_stream_to_default_speakers_with_baseline(existing_ids: Vec<String
         }
         eprintln!("[audio] Timeout waiting for local sidetone stream");
     });
-}
-
-#[cfg(not(target_os = "linux"))]
-fn route_local_stream_to_default_speakers_with_baseline(_existing_ids: Vec<String>) {
-    // No-op on non-Linux platforms
 }
 
 /// Get current sink-input IDs

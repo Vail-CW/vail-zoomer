@@ -1,6 +1,7 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
 import { check, Update } from "@tauri-apps/plugin-updater";
 
@@ -12,7 +13,10 @@ import { OperationalView } from "./components/main/OperationalView";
 import { SettingsSheet } from "./components/main/SettingsSheet";
 import { HelpModal } from "./components/main/HelpModal";
 import { TroubleshootingModal } from "./components/main/TroubleshootingModal";
-import { BigButton } from "./components/shared/BigButton";
+import { Button } from "./components/shared/Button";
+import { findVirtualOutput } from "./components/audio/audioHelpers";
+import { ToastStack, ToastItem, ToastKind } from "./components/shared/Toast";
+import { useTheme } from "./hooks/useTheme";
 
 // Device info from backend (friendly name + internal name for selection)
 interface DeviceInfo {
@@ -39,7 +43,22 @@ interface Settings {
   input_device: string | null;
   output_device: string | null;
   linux_audio_setup_completed: boolean;
+  sidetone_rise_ms: number;
+  buffer_size_mode: "Auto" | "Low" | "Safe";
+  theme: "dark" | "light" | "system";
+  practice_mode: boolean;
+  ui_scale: number;
 }
+
+type AudioStatusPayload = {
+  state: "running" | "restarting" | "error" | "stopped";
+  message: string | null;
+};
+type MidiStatusPayload = {
+  connected: boolean;
+  device: string | null;
+  error: string | null;
+};
 
 // Linux virtual audio setup types
 interface VirtualAudioStatus {
@@ -68,6 +87,8 @@ type AppMode = "wizard" | "main" | "video-tips";
 const WIZARD_VERSION = "v3";
 const WIZARD_COMPLETE_KEY = `vail-zoomer-wizard-complete-${WIZARD_VERSION}`;
 
+const MIN_WINDOW = { w: 680, h: 600 };
+
 function App() {
   // App mode state
   const [appMode, setAppMode] = useState<AppMode>("wizard");
@@ -92,6 +113,10 @@ function App() {
   const [selectedInputDevice, setSelectedInputDevice] = useState<string | null>(null);
   const [selectedOutputDevice, setSelectedOutputDevice] = useState<string | null>(null);
   const [selectedLocalDevice, setSelectedLocalDevice] = useState<string | null>(null);
+  const [currentElements, setCurrentElements] = useState("");
+  const [midiError, setMidiError] = useState<string | null>(null);
+  const [compact, setCompact] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [micLevel, setMicLevel] = useState(0);
   const [outputLevel, setOutputLevel] = useState(0);
 
@@ -134,10 +159,64 @@ function App() {
     input_device: null,
     output_device: null,
     linux_audio_setup_completed: false,
+    sidetone_rise_ms: 5,
+    buffer_size_mode: "Auto",
+    theme: "dark",
+    practice_mode: false,
+    ui_scale: 1.0,
   });
+  useTheme(settings.theme);
 
   // Ref to track current settings synchronously (React state is async)
   const settingsRef = useRef<Settings>(settings);
+  const midiConnectedRef = useRef(false);
+  // Last virtual output the app routed to. Stops the forced-output effect and
+  // the device poll from restarting audio twice for the same device.
+  const lastForcedOutputRef = useRef<string | null>(null);
+
+  // Toast helpers. Keyed toasts replace an earlier toast with the same id.
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  const pushToast = useCallback(
+    (id: string, kind: ToastKind, message: string, sticky = false) => {
+      setToasts((prev) => [
+        ...prev.filter((t) => t.id !== id),
+        { id, kind, message, sticky },
+      ]);
+    },
+    []
+  );
+
+  // Apply the user's UI scale by adjusting the root font size. Tailwind's text
+  // and spacing are rem-based, so this enlarges the whole interface uniformly
+  // without breaking the fixed-height layout. Clamped to a sane range.
+  useEffect(() => {
+    const scale = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
+    document.documentElement.style.fontSize = `${14 * scale}px`;
+  }, [settings.ui_scale]);
+
+  // Keep the fixed (non-scrolling) layout fitting: grow the window minimum
+  // proportionally with the UI scale. Skipped in mini mode (own fixed layout).
+  useEffect(() => {
+    if (compact) return;
+    const scale = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
+    const minW = Math.round(MIN_WINDOW.w * scale);
+    const minH = Math.round(MIN_WINDOW.h * scale);
+    (async () => {
+      try {
+        const win = getCurrentWindow();
+        await win.setMinSize(new LogicalSize(minW, minH));
+        const [size, factor] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+        const logical = size.toLogical(factor);
+        if (logical.width < minW || logical.height < minH) {
+          await win.setSize(new LogicalSize(Math.max(logical.width, minW), Math.max(logical.height, minH)));
+        }
+      } catch {
+        /* not running inside Tauri */
+      }
+    })();
+  }, [settings.ui_scale, compact]);
 
 
   // Ref to track the user's saved mic volume (for restoring after wizard mute)
@@ -205,22 +284,10 @@ function App() {
       setSelectedOutputDevice(savedSettings.output_device);
       setSelectedLocalDevice(savedSettings.local_output_device);
 
-      // List MIDI devices and connect to saved or auto-detect
-      const midiDeviceList = await invoke<string[]>("list_midi_devices");
-      setMidiDevices(midiDeviceList);
-
-      // Try to connect to saved MIDI device, or auto-detect Vail
-      const midiToConnect = savedSettings.midi_device || midiDeviceList.find(d =>
-        d.toLowerCase().includes("vail") ||
-        d.toLowerCase().includes("xiao") ||
-        d.toLowerCase().includes("seeed") ||
-        d.toLowerCase().includes("samd21") ||
-        d.toLowerCase().includes("qt py") ||
-        d.toLowerCase().includes("qtpy")
-      );
-      if (midiToConnect && midiDeviceList.includes(midiToConnect)) {
-        connectMidi(midiToConnect);
-      }
+      // The backend auto-connects the MIDI adapter and reports via midi:status.
+      // Here we only fetch the list for the Settings device picker.
+      setSelectedMidiDevice((prev) => prev ?? savedSettings.midi_device);
+      invoke<string[]>("list_midi_devices").then(setMidiDevices).catch(() => {});
 
       // List audio devices
       const [inputDeviceList, outputDeviceList] = await Promise.all([
@@ -230,56 +297,37 @@ function App() {
       setInputDevices(inputDeviceList);
       setOutputDevices(outputDeviceList);
 
-      // Enforce: never start audio with a "system default" mic. Auto-pick the
-      // first non-virtual input when the saved choice is missing or no longer
-      // present in the system (e.g. the headset they used last time is
-      // unplugged). Picking a specific device avoids a class of issues users
-      // have hit historically when the system default got reassigned.
+      // Restore the user's saved mic if it's still present, but never auto-pick
+      // one for them — the user chooses their microphone explicitly in Step 3.
+      // Virtual devices (VailZoomer/BlackHole/VB-Cable) are routing endpoints,
+      // not mics, so they can never be the saved input either.
       const realInputs = inputDeviceList.filter((d) => {
         const n = (d.internal_name + " " + d.display_name).toLowerCase();
         return !n.includes("vailzoomer") && !n.includes("vail zoomer")
-          && !n.includes("blackhole");
+          && !n.includes("blackhole")
+          && !n.includes("cable") && !n.includes("vb-audio");
       });
       const savedInputStillValid = savedSettings.input_device
         && realInputs.some((d) => d.internal_name === savedSettings.input_device);
-      if (!savedInputStillValid && realInputs.length > 0) {
-        savedSettings.input_device = realInputs[0].internal_name;
-        setSelectedInputDevice(realInputs[0].internal_name);
-        updateSettings({ input_device: realInputs[0].internal_name });
+      if (!savedInputStillValid) {
+        // Saved mic is gone this session (or none saved): leave nothing
+        // selected so the picker shows "Choose a microphone…" instead of
+        // silently grabbing a device the user didn't pick. We keep the saved
+        // name on disk untouched so it auto-restores if the device returns.
+        setSelectedInputDevice(null);
       }
 
-      // On macOS, auto-detect BlackHole and set it as the output device
-      // (similar to how Linux auto-detects VailZoomer)
-      if (detectedOS === "macos") {
-        const blackHoleDevice = outputDeviceList.find(d =>
-          d.internal_name.toLowerCase().includes("blackhole") ||
-          d.display_name.toLowerCase().includes("blackhole")
-        );
-        if (blackHoleDevice && savedSettings.output_device !== blackHoleDevice.internal_name) {
-          console.log("[audio] Auto-selecting BlackHole as output device:", blackHoleDevice.display_name);
-          savedSettings.output_device = blackHoleDevice.internal_name;
-          setSelectedOutputDevice(blackHoleDevice.internal_name);
-          updateSettings({ output_device: blackHoleDevice.internal_name });
+      // The output is forced to the platform's virtual cable (VB-Cable,
+      // BlackHole or VailZoomer). There is no user-facing output picker.
+      const virtualDevice = findVirtualOutput(outputDeviceList, detectedOS);
+      if (virtualDevice) {
+        lastForcedOutputRef.current = virtualDevice.internal_name;
+        if (savedSettings.output_device !== virtualDevice.internal_name) {
+          console.log("[audio] Forcing virtual output:", virtualDevice.display_name);
+          savedSettings.output_device = virtualDevice.internal_name;
+          updateSettings({ output_device: virtualDevice.internal_name });
         }
-      }
-
-      // On Windows, auto-detect VB-Audio Cable. Without this, a fresh install
-      // has no UI path to select it during the wizard and the user ends up
-      // routing morse to their speakers instead of to Zoom.
-      if (detectedOS === "windows") {
-        const cableDevice = outputDeviceList.find(d => {
-          const i = d.internal_name.toLowerCase();
-          const n = d.display_name.toLowerCase();
-          return i.includes("cable input") || n.includes("cable input")
-            || (i.includes("cable") && i.includes("vb-audio"))
-            || (n.includes("cable") && n.includes("vb-audio"));
-        });
-        if (cableDevice && savedSettings.output_device !== cableDevice.internal_name) {
-          console.log("[audio] Auto-selecting VB-Cable as output device:", cableDevice.display_name);
-          savedSettings.output_device = cableDevice.internal_name;
-          setSelectedOutputDevice(cableDevice.internal_name);
-          updateSettings({ output_device: cableDevice.internal_name });
-        }
+        setSelectedOutputDevice(virtualDevice.internal_name);
       }
 
       // On Linux, check if VailZoomer exists - if not, mute mic to prevent echo
@@ -390,47 +438,65 @@ function App() {
       }
     };
 
-    initialize();
+    // Register all event listeners BEFORE initialize() so early backend
+    // events (e.g. midi:status from auto-connect) are not missed.
+    const unlisteners: Promise<() => void>[] = [
+      listen<{ character: string; wpm: number }>("cw:decoded", (event) => {
+        setCwText((prev) => prev + event.payload.character);
+        setEstimatedWpm(event.payload.wpm);
+      }),
+      listen<{ down: boolean }>("cw:key", (event) => {
+        setIsKeyDown(event.payload.down);
+      }),
+      listen<{ elements: string }>("cw:element", (event) => {
+        setCurrentElements(event.payload.elements);
+      }),
+      listen<{ mic: number; output: number }>("audio:levels", (event) => {
+        setMicLevel(event.payload.mic);
+        setOutputLevel(event.payload.output);
+      }),
+      listen<AudioStatusPayload>("audio:status", (event) => {
+        const { state, message } = event.payload;
+        if (state === "running") {
+          setAudioStarted(true);
+          dismissToast("audio-status");
+        } else if (state === "restarting") {
+          pushToast("audio-status", "warning", message || "Audio device lost, restarting");
+        } else if (state === "error") {
+          pushToast("audio-status", "error", message || "Audio error", true);
+        } else if (state === "stopped") {
+          dismissToast("audio-status");
+        }
+      }),
+      listen<MidiStatusPayload>("midi:status", (event) => {
+        const { connected, device, error } = event.payload;
+        const wasConnected = midiConnectedRef.current;
+        midiConnectedRef.current = connected;
+        setMidiConnected(connected);
+        setMidiError(error);
+        if (device) setSelectedMidiDevice(device);
+        if (connected && !wasConnected) {
+          pushToast("midi-status", "success", "Vail Adapter connected");
+        } else if (!connected && wasConnected) {
+          pushToast("midi-status", "warning", "Vail Adapter disconnected, reconnecting");
+        } else if (!connected && error) {
+          pushToast("midi-status", "error", error, true);
+        }
+      }),
+      listen<string[]>("midi:devices", (event) => {
+        setMidiDevices(event.payload);
+      }),
+      listen<Settings>("settings:changed", (event) => {
+        settingsRef.current = event.payload;
+        setSettings(event.payload);
+      }),
+    ];
 
-    // Listen for CW decoder events from Rust backend
-    const unlistenCw = listen<{ character: string; wpm: number }>("cw:decoded", (event) => {
-      setCwText((prev) => prev + event.payload.character);
-      setEstimatedWpm(event.payload.wpm);
-    });
-
-    // Listen for key state changes
-    const unlistenKey = listen<{ down: boolean }>("cw:key", (event) => {
-      setIsKeyDown(event.payload.down);
-    });
-
-    // Listen for MIDI connection status
-    const unlistenMidi = listen<{ connected: boolean }>("midi:status", (event) => {
-      setMidiConnected(event.payload.connected);
-    });
+    Promise.all(unlisteners).then(() => initialize());
 
     return () => {
-      unlistenCw.then((f) => f());
-      unlistenKey.then((f) => f());
-      unlistenMidi.then((f) => f());
+      unlisteners.forEach((u) => u.then((f) => f()));
     };
-  }, []);
-
-  // Poll audio levels at ~10fps (100ms) - lower frequency to reduce IPC pressure on macOS
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const [mic, output] = await Promise.all([
-          invoke<number>("get_mic_level"),
-          invoke<number>("get_output_level"),
-        ]);
-        setMicLevel(mic);
-        setOutputLevel(output);
-      } catch {
-        // Ignore errors during polling
-      }
-    }, 100);
-
-    return () => clearInterval(interval);
   }, []);
 
   // Poll audio devices to detect plug/unplug (e.g. Bluetooth headphones)
@@ -459,28 +525,21 @@ function App() {
         setInputDevices(newInputDevices);
         setOutputDevices(newOutputDevices);
 
-        // If devices changed and audio is running, restart audio to pick up new default device
+        // If devices changed and audio is running, restart audio to pick up new default device.
+        // The output is always the virtual cable when it is present.
+        const forced = findVirtualOutput(newOutputDevices, currentOS);
         if ((inputChanged || outputChanged) && audioStarted) {
           console.log("[audio] Device list changed, restarting audio...");
-          const savedMicVol = settingsRef.current.mic_volume;
-          const savedSidetoneVol = settingsRef.current.sidetone_volume;
           try {
-            await invoke("set_mic_volume", { volume: 0 }).catch(() => {});
-            await invoke("set_sidetone_volume", { volume: 0 }).catch(() => {});
+            if (forced) lastForcedOutputRef.current = forced.internal_name;
             await invoke("stop_audio");
-            // Give CoreAudio time to fully release the device before re-opening
-            await new Promise(resolve => setTimeout(resolve, 500));
             await invoke("start_audio_with_all_devices", {
-              outputDevice: selectedOutputDevice,
+              outputDevice: forced ? forced.internal_name : selectedOutputDevice,
               inputDevice: selectedInputDevice,
               localDevice: selectedLocalDevice,
             });
           } catch (err) {
             console.error("[audio] Failed to restart audio after device change:", err);
-          } finally {
-            await new Promise(resolve => setTimeout(resolve, 150));
-            await invoke("set_mic_volume", { volume: savedMicVol }).catch(() => {});
-            await invoke("set_sidetone_volume", { volume: savedSidetoneVol }).catch(() => {});
           }
         }
       } catch {
@@ -489,59 +548,79 @@ function App() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [audioStarted, selectedOutputDevice, selectedInputDevice, selectedLocalDevice]);
+  }, [audioStarted, selectedOutputDevice, selectedInputDevice, selectedLocalDevice, currentOS]);
 
-  // Poll MIDI devices to detect plug/unplug
+  // Force the virtual cable as the output whenever the device list updates
+  // (install finished, driver appeared, saved device went stale).
   useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const devices = await invoke<string[]>("list_midi_devices");
-        setMidiDevices(devices);
+    const forced = findVirtualOutput(outputDevices, currentOS);
+    if (!forced) return;
+    const name = forced.internal_name;
+    if (selectedOutputDevice !== name) {
+      setSelectedOutputDevice(name);
+      updateSettings({ output_device: name });
+    }
+    if (lastForcedOutputRef.current !== name) {
+      lastForcedOutputRef.current = name;
+      if (audioStarted) void restartAudio(name, selectedInputDevice);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outputDevices, currentOS]);
 
-        // If our selected device is no longer available, mark as disconnected
-        if (selectedMidiDevice && !devices.includes(selectedMidiDevice)) {
-          setMidiConnected(false);
-          setSelectedMidiDevice(null);
-        }
-
-        // Auto-connect if not connected and a Vail device appears
-        if (!midiConnected && devices.length > 0) {
-          // First try the saved device from settings
-          const savedDevice = settings.midi_device;
-          if (savedDevice && devices.includes(savedDevice)) {
-            connectMidi(savedDevice);
-          } else {
-            // Otherwise auto-detect Vail adapter
-            const vailDevice = devices.find(d =>
-              d.toLowerCase().includes("vail") ||
-              d.toLowerCase().includes("xiao") ||
-              d.toLowerCase().includes("seeed") ||
-              d.toLowerCase().includes("samd21") ||
-              d.toLowerCase().includes("qt py") ||
-              d.toLowerCase().includes("qtpy")
-            );
-            if (vailDevice) {
-              connectMidi(vailDevice);
-            }
-          }
-        }
-      } catch {
-        // Ignore errors during polling
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [selectedMidiDevice, midiConnected, settings.midi_device]);
-
+  // Manual adapter pick from Settings. Connection state comes back via midi:status.
   const connectMidi = async (deviceName: string) => {
     try {
       await invoke("connect_midi_device", { deviceName });
       setSelectedMidiDevice(deviceName);
-      setMidiConnected(true);
       updateSettings({ midi_device: deviceName });
     } catch (err) {
       console.error("Failed to connect MIDI:", err);
-      setMidiConnected(false);
+      setMidiError(String(err));
+    }
+  };
+
+  const refreshMidiDevices = async () => {
+    try {
+      setMidiDevices(await invoke<string[]>("list_midi_devices"));
+    } catch (err) {
+      console.error("Failed to list MIDI devices:", err);
+    }
+  };
+
+  const previewTone = (hz: number) => {
+    invoke("play_tone_preview", { frequency: hz, durationMs: 300 }).catch(() => {});
+  };
+
+  const setPracticeMode = (enabled: boolean) => {
+    updateSettings({ practice_mode: enabled });
+    invoke("set_practice_mode", { enabled }).catch((err) =>
+      console.error("Failed to set practice mode:", err)
+    );
+  };
+
+  // Compact / mini mode: small always-on-top window.
+  const savedWindowSizeRef = useRef<{ w: number; h: number } | null>(null);
+  const toggleCompact = async () => {
+    const next = !compact;
+    setCompact(next);
+    try {
+      const win = getCurrentWindow();
+      if (next) {
+        const [size, factor] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+        const logical = size.toLogical(factor);
+        savedWindowSizeRef.current = { w: logical.width, h: logical.height };
+        await win.setAlwaysOnTop(true);
+        await win.setMinSize(new LogicalSize(360, 200));
+        await win.setSize(new LogicalSize(420, 260));
+      } else {
+        const prev = savedWindowSizeRef.current ?? { w: 800, h: 640 };
+        const sc = Math.min(1.5, Math.max(1, settings.ui_scale || 1));
+        await win.setMinSize(new LogicalSize(Math.round(MIN_WINDOW.w * sc), Math.round(MIN_WINDOW.h * sc)));
+        await win.setSize(new LogicalSize(prev.w, prev.h));
+        await win.setAlwaysOnTop(false);
+      }
+    } catch (err) {
+      console.error("Failed to change window mode:", err);
     }
   };
 
@@ -651,17 +730,8 @@ function App() {
     inputDevice: string | null,
     localDevice?: string | null
   ) => {
-    // Mute mic + sidetone across the swap so the brief window when the engine
-    // is between devices can't produce an acoustic feedback loop (mic →
-    // default speakers while the virtual cable is briefly absent).
-    const savedMicVol = settingsRef.current.mic_volume;
-    const savedSidetoneVol = settingsRef.current.sidetone_volume;
     try {
-      await invoke("set_mic_volume", { volume: 0 }).catch(() => {});
-      await invoke("set_sidetone_volume", { volume: 0 }).catch(() => {});
       await invoke("stop_audio");
-      // Give CoreAudio time to fully release the device before re-opening
-      await new Promise(resolve => setTimeout(resolve, 500));
       // Use localDevice if provided, otherwise fall back to current selectedLocalDevice
       const effectiveLocalDevice = localDevice !== undefined ? localDevice : selectedLocalDevice;
       await invoke("start_audio_with_all_devices", {
@@ -676,11 +746,6 @@ function App() {
     } catch (err) {
       console.error("Failed to restart audio:", err);
       setAudioStarted(false);
-    } finally {
-      // Settle for one render cycle, then restore the user's volumes.
-      await new Promise(resolve => setTimeout(resolve, 150));
-      await invoke("set_mic_volume", { volume: savedMicVol }).catch(() => {});
-      await invoke("set_sidetone_volume", { volume: savedSidetoneVol }).catch(() => {});
     }
   };
 
@@ -724,32 +789,20 @@ function App() {
     }
   };
 
-  // Update banner component
-  const UpdateBanner = () => {
-    if (!updateAvailable) return null;
-    return (
-      <div className="fixed top-0 left-0 right-0 p-3 bg-green-900/90 border-b border-green-700 z-50">
-        <div className="flex items-center justify-center gap-4">
-          <span className="text-green-300 text-lg">
-            Update Available: v{updateAvailable.version} — download from GitHub
-          </span>
-          <BigButton
-            variant="success"
-            onClick={handleOpenReleases}
-            className="!min-h-0 !py-2 !px-4 !text-base"
-          >
-            Open Releases Page
-          </BigButton>
-          <button
-            onClick={() => setUpdateAvailable(null)}
-            className="text-green-400 hover:text-white"
-          >
-            Later
-          </button>
-        </div>
-      </div>
-    );
-  };
+  // Update banner: slim in-flow bar above whichever screen is showing.
+  const updateBanner = updateAvailable ? (
+    <div className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-surface px-4" role="status">
+      <span className="min-w-0 flex-1 truncate text-base">
+        Update available: v{updateAvailable.version}
+      </span>
+      <Button variant="primary" onClick={handleOpenReleases}>
+        Open releases page
+      </Button>
+      <Button variant="ghost" onClick={() => setUpdateAvailable(null)}>
+        Later
+      </Button>
+    </div>
+  ) : null;
 
   // Re-query backend device lists. Used whenever a device picker opens and
   // on window focus, so freshly connected Bluetooth/USB hardware shows up
@@ -808,7 +861,7 @@ function App() {
       );
 
       if (vailZoomerDevice) {
-        setLinuxSetupLog(prev => [...prev, `✓ Found VailZoomer device: ${vailZoomerDevice.display_name}`]);
+        setLinuxSetupLog(prev => [...prev, `OK: Found VailZoomer device: ${vailZoomerDevice.display_name}`]);
         setSelectedOutputDevice(vailZoomerDevice.internal_name);
 
         // Unmute mic now that VailZoomer is set up (prevents feedback echo)
@@ -823,25 +876,17 @@ function App() {
 
         // Restart audio with the new VailZoomer device to ensure proper initialization
         setLinuxSetupLog(prev => [...prev, "Initializing audio routing..."]);
-        const savedSidetoneVol = settingsRef.current.sidetone_volume;
         try {
-          await invoke("set_mic_volume", { volume: 0 }).catch(() => {});
-          await invoke("set_sidetone_volume", { volume: 0 }).catch(() => {});
           await invoke("stop_audio");
           await invoke("start_audio_with_all_devices", {
             outputDevice: vailZoomerDevice.internal_name,
             inputDevice: selectedInputDevice,
             localDevice: selectedLocalDevice,
           });
-          setLinuxSetupLog(prev => [...prev, "✓ Audio routing active"]);
+          setLinuxSetupLog(prev => [...prev, "OK: Audio routing active"]);
         } catch (err) {
           console.error("Failed to restart audio after setup:", err);
           setLinuxSetupLog(prev => [...prev, `Warning: Audio restart failed: ${err}`]);
-        } finally {
-          await new Promise(resolve => setTimeout(resolve, 150));
-          // Restore using newMicVolume (the value we just set above), then sidetone
-          await invoke("set_mic_volume", { volume: newMicVolume }).catch(() => {});
-          await invoke("set_sidetone_volume", { volume: savedSidetoneVol }).catch(() => {});
         }
       } else {
         setLinuxSetupLog(prev => [...prev, "Warning: VailZoomer device not found in device list"]);
@@ -853,7 +898,7 @@ function App() {
     } catch (err) {
       const errorMsg = String(err);
       setLinuxSetupError(errorMsg);
-      setLinuxSetupLog(prev => [...prev, `✗ Error: ${errorMsg}`]);
+      setLinuxSetupLog(prev => [...prev, `Error: ${errorMsg}`]);
     } finally {
       // After every setup attempt (success or failure), refresh the list of
       // missing prerequisites so the UI can offer a one-click "Install" path
@@ -884,7 +929,7 @@ function App() {
         if (!result.used_graphical_auth) {
           setLinuxSetupLog(prev => [
             ...prev,
-            "No graphical sudo available — run the manual command above in a terminal.",
+            "No graphical sudo available. Run the manual command in a terminal.",
           ]);
         }
         return;
@@ -902,7 +947,7 @@ function App() {
     } catch (err) {
       const msg = String(err);
       setLinuxSetupError(msg);
-      setLinuxSetupLog(prev => [...prev, `✗ Install error: ${msg}`]);
+      setLinuxSetupLog(prev => [...prev, `Error: install failed: ${msg}`]);
     } finally {
       setLinuxInstallInProgress(false);
     }
@@ -912,7 +957,7 @@ function App() {
   if (appMode === "wizard") {
     return (
       <>
-        <UpdateBanner />
+        {updateBanner}
         {wizardStep === 1 && (
           <Step1KeyerSetup
             midiDevices={midiDevices}
@@ -950,14 +995,12 @@ function App() {
             inputDevices={inputDevices}
             outputDevices={outputDevices}
             selectedInputDevice={selectedInputDevice}
-            selectedOutputDevice={selectedOutputDevice}
             selectedLocalDevice={selectedLocalDevice}
             sidetoneRoute={settings.sidetone_route}
             micLevel={micLevel}
             micVolume={settings.mic_volume}
             currentOS={currentOS}
             onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
-            onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}
             onLocalDeviceChange={(device) => {
               setSelectedLocalDevice(device);
               updateSettings({ local_output_device: device });
@@ -1016,11 +1059,12 @@ function App() {
   if (appMode === "video-tips") {
     return (
       <>
-        <UpdateBanner />
+        {updateBanner}
         <Step4VideoAppTips
           onBack={() => setAppMode("main")}
           onComplete={() => setAppMode("main")}
           currentOS={currentOS}
+          standalone
         />
       </>
     );
@@ -1034,10 +1078,18 @@ function App() {
     setAppMode("wizard");
   };
 
+  // Open the install flow for the virtual cable (wizard step 2) from the main
+  // screen or Settings. Does not clear the wizard-complete flag.
+  const openOutputSetup = () => {
+    setShowSettings(false);
+    setWizardStep(2);
+    setAppMode("wizard");
+  };
+
   // Main operational view
   return (
     <>
-      <UpdateBanner />
+      {updateBanner}
       <OperationalView
         midiConnected={midiConnected}
         audioStarted={audioStarted}
@@ -1055,6 +1107,8 @@ function App() {
         sidetoneRoute={settings.sidetone_route}
         selectedLocalDevice={selectedLocalDevice}
         outputDevices={outputDevices}
+        currentOS={currentOS}
+        onSetupOutput={openOutputSetup}
         keyerType={settings.keyer_type}
         wpm={settings.wpm}
         sidetoneFrequency={settings.sidetone_frequency}
@@ -1071,6 +1125,13 @@ function App() {
         onStartTestRecording={startTestRecording}
         onStopTestRecording={stopTestRecording}
         onStopTestPlayback={stopTestPlayback}
+        midiError={midiError}
+        currentElements={currentElements}
+        compact={compact}
+        onToggleCompact={toggleCompact}
+        practiceMode={settings.practice_mode}
+        onPracticeModeChange={setPracticeMode}
+        onPreviewTone={previewTone}
       />
 
       {showSettings && (
@@ -1081,7 +1142,6 @@ function App() {
           inputDevices={inputDevices}
           outputDevices={outputDevices}
           selectedInputDevice={selectedInputDevice}
-          selectedOutputDevice={selectedOutputDevice}
           selectedLocalDevice={selectedLocalDevice}
           micLevel={micLevel}
           currentOS={currentOS}
@@ -1092,9 +1152,10 @@ function App() {
           micVolume={settings.mic_volume}
           micDucking={settings.mic_ducking}
           sidetoneRoute={settings.sidetone_route}
+          uiScale={settings.ui_scale}
+          onUiScaleChange={(scale) => updateSettings({ ui_scale: scale })}
           onSelectMidiDevice={connectMidi}
           onInputDeviceChange={(device) => restartAudio(selectedOutputDevice, device)}
-          onOutputDeviceChange={(device) => restartAudio(device, selectedInputDevice)}
           onLocalDeviceChange={(device) => {
             setSelectedLocalDevice(device);
             updateSettings({ local_output_device: device });
@@ -1127,10 +1188,27 @@ function App() {
           onMicVolumeChange={(vol) => updateSettings({ mic_volume: vol })}
           onMicDuckingChange={(enabled) => updateSettings({ mic_ducking: enabled })}
           onRefreshDevices={refreshDeviceLists}
+          onRefreshMidiDevices={refreshMidiDevices}
+          onPreviewTone={previewTone}
+          theme={settings.theme}
+          sidetoneRiseMs={settings.sidetone_rise_ms}
+          bufferSizeMode={settings.buffer_size_mode}
+          onThemeChange={(theme) => updateSettings({ theme })}
+          onSidetoneRiseMsChange={(ms) => {
+            updateSettings({ sidetone_rise_ms: ms });
+            invoke("set_sidetone_rise_ms", { ms }).catch(() => {});
+          }}
+          onBufferSizeModeChange={(mode) => {
+            updateSettings({ buffer_size_mode: mode });
+            invoke("set_buffer_size_mode", { mode }).catch(() => {});
+          }}
+          onSetupOutput={openOutputSetup}
           onRerunSetup={rerunWizard}
           onClose={() => setShowSettings(false)}
         />
       )}
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showTroubleshoot && (

@@ -713,7 +713,7 @@ pub fn missing_prerequisites() -> Vec<&'static str> {
     if audio == AudioSystem::PipeWire && !is_pipewire_alsa_installed() {
         missing.push("pipewire-alsa");
     }
-    if !is_alsa_pulse_plugin_installed() {
+    if audio == AudioSystem::PulseAudio && !is_alsa_pulse_plugin_installed() {
         missing.push("alsa-pulse-plugin");
     }
     missing
