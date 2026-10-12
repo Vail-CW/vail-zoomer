@@ -1,6 +1,5 @@
 import { StepIndicator } from "./StepIndicator";
 import { Button } from "../shared/Button";
-import { AppIcon } from "../shared/AppIcon";
 import { ArrowLeftIcon, ArrowRightIcon, HeadphonesIcon } from "../shared/icons";
 
 interface WizardLayoutProps {
@@ -40,10 +39,7 @@ export function WizardLayout({
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden text-ink">
       <header className="flex h-11 shrink-0 items-center justify-between border-b border-line bg-surface px-4">
-        <div className="flex items-center gap-2">
-          <AppIcon size={20} />
-          <span className="text-lg font-semibold">Vail Zoomer</span>
-        </div>
+        <span className="text-sm font-semibold uppercase tracking-wide text-muted">Setup</span>
         {!hideStepper && (
           <StepIndicator currentStep={currentStep} totalSteps={totalSteps} stepLabels={stepLabels} />
         )}

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { AppIcon } from "../shared/AppIcon";
 import { Button } from "../shared/Button";
 import { IconButton } from "../shared/IconButton";
 import { Card } from "../shared/Card";
@@ -242,10 +241,6 @@ export function OperationalView({
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden text-ink">
       {/* Top bar */}
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
-        <div className="flex shrink-0 items-center gap-2">
-          <AppIcon size={20} />
-          <h1 className="text-lg font-semibold">Vail Zoomer</h1>
-        </div>
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
